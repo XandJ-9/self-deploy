@@ -25,6 +25,8 @@ export interface ConnectionTestResult {
   /** 远端路径的附加信息（目录条目数 / 文件大小 等），便于 UI 显示 */
   remoteInfo?: {
     absolutePath?: string;
+    /** 登录后会话默认所在的当前目录（用户 home / landing dir） */
+    loginCwd?: string;
     entryCount?: number;
     dirCount?: number;
     fileCount?: number;
@@ -53,6 +55,13 @@ export async function testSftpConnection(cfg: SftpConnectConfig): Promise<Connec
   const target = cfg.remoteBasePath || '/';
   try {
     await sftp.connect(buildConnectOptions(cfg));
+    // 登录后默认所在的当前目录（会话 CWD，通常为用户 home）
+    let loginCwd: string | undefined;
+    try {
+      loginCwd = (await sftp.realPath('.')) || undefined;
+    } catch {
+      /* ignore */
+    }
     const exists = await sftp.exists(target);
     if (!exists) {
       // 探测父目录是否可写，给用户更明确的提示
@@ -69,10 +78,10 @@ export async function testSftpConnection(cfg: SftpConnectConfig): Promise<Connec
       return {
         ok: true,
         message:
-          `连接成功，但远端路径 ${target} 不存在（首次部署时会自动创建）` +
+          `连接成功，当前目录：${loginCwd ?? '(未知)'}；但部署路径 ${target} 不存在（首次部署时会自动创建）` +
           (parentWritable === false ? `；⚠️ 父目录 ${parent} 不可写，部署会失败` : ''),
         remoteExists: false,
-        remoteInfo: { absolutePath: target, writable: parentWritable },
+        remoteInfo: { absolutePath: target, loginCwd, writable: parentWritable },
       };
     }
 
@@ -95,36 +104,23 @@ export async function testSftpConnection(cfg: SftpConnectConfig): Promise<Connec
       }
       return {
         ok: true,
-        message: `连接成功，远端为${exists === 'l' ? '软链接' : '文件'} ${absolutePath}${
+        message: `连接成功，当前目录：${loginCwd ?? '(未知)'}；远端为${exists === 'l' ? '软链接' : '文件'} ${absolutePath}${
           size !== undefined ? `（${formatBytes(size)}）` : ''
         }`,
         remoteExists: exists,
-        remoteInfo: { absolutePath, size, modifyTime },
+        remoteInfo: { absolutePath, loginCwd, size, modifyTime },
       };
     }
 
-    // 目录：列出条目并探测可写
-    const entries = await sftp.list(target);
-    const dirCount = entries.filter((e) => e.type === 'd').length;
-    const fileCount = entries.filter((e) => e.type === '-').length;
-    const sample = entries.slice(0, 5).map((e) => (e.type === 'd' ? `${e.name}/` : e.name));
+    // 目录：仅探测可写性，不列出目录内容
     const writable = await probeSftpWritable(sftp, target);
-
     return {
       ok: true,
       message:
-        `连接成功，远端目录 ${absolutePath} 共 ${entries.length} 项` +
-        `（${dirCount} 目录 / ${fileCount} 文件${writable ? '，可写' : '，⚠️ 不可写'}）` +
-        (sample.length > 0 ? `；示例：${sample.join(', ')}` : ''),
+        `连接成功，当前目录：${loginCwd ?? '(未知)'}；部署目标目录：${absolutePath}` +
+        (writable ? '' : '；⚠️ 目录不可写，部署会失败'),
       remoteExists: 'd',
-      remoteInfo: {
-        absolutePath,
-        entryCount: entries.length,
-        dirCount,
-        fileCount,
-        sample,
-        writable,
-      },
+      remoteInfo: { absolutePath, loginCwd, writable },
     };
   } catch (err) {
     return { ok: false, message: `SFTP 连接失败：${(err as Error).message}` };
@@ -181,8 +177,19 @@ export class SftpTransport implements Transport {
   }
 
   async mkdirp(remoteDir: string): Promise<void> {
-    // ssh2-sftp-client mkdir(recursive=true) 已存在不会抛错
-    await this.client.mkdir(remoteDir, true);
+    try {
+      await this.client.mkdir(remoteDir, true);
+    } catch (err) {
+      // 防御：并发 mkdir 同一目录时，ssh2-sftp-client 可能把已存在误报为
+      // "Bad path ... permission denied"。再 stat 一次确认存在则视作成功。
+      try {
+        const t = await this.client.exists(remoteDir);
+        if (t === 'd') return;
+      } catch {
+        /* fallthrough */
+      }
+      throw err;
+    }
   }
 
   async put(localPath: string, remotePath: string): Promise<void> {

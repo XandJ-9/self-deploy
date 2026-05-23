@@ -30,14 +30,21 @@ export async function testFtpConnection(cfg: FtpConnectConfig): Promise<Connecti
       password: cfg.secret,
       secure: cfg.secure ?? false,
     });
+    // 登录后会话默认所在的当前目录
+    let loginCwd: string | undefined;
+    try {
+      loginCwd = await client.pwd();
+    } catch {
+      /* ignore */
+    }
     try {
       await client.cd(targetPath);
     } catch {
       return {
         ok: true,
-        message: `FTP 连接成功，但远端路径 ${targetPath} 不存在（首次部署时会自动创建）`,
+        message: `FTP 连接成功，当前目录：${loginCwd ?? '(未知)'}；但部署路径 ${targetPath} 不存在（首次部署时会自动创建）`,
         remoteExists: false,
-        remoteInfo: { absolutePath: targetPath },
+        remoteInfo: { absolutePath: targetPath, loginCwd },
       };
     }
 
@@ -48,32 +55,14 @@ export async function testFtpConnection(cfg: FtpConnectConfig): Promise<Connecti
       /* ignore */
     }
 
-    let entries: Awaited<ReturnType<Client['list']>> = [];
-    try {
-      entries = await client.list();
-    } catch {
-      /* ignore */
-    }
-    const dirCount = entries.filter((e) => e.isDirectory).length;
-    const fileCount = entries.filter((e) => e.isFile).length;
-    const sample = entries.slice(0, 5).map((e) => (e.isDirectory ? `${e.name}/` : e.name));
     const writable = await probeFtpWritable(client);
-
     return {
       ok: true,
       message:
-        `FTP 连接成功，远端目录 ${absolutePath} 共 ${entries.length} 项` +
-        `（${dirCount} 目录 / ${fileCount} 文件${writable ? '，可写' : '，⚠️ 不可写'}）` +
-        (sample.length > 0 ? `；示例：${sample.join(', ')}` : ''),
+        `FTP 连接成功，当前目录：${loginCwd ?? '(未知)'}；部署目标目录：${absolutePath}` +
+        (writable ? '' : '；⚠️ 目录不可写，部署会失败'),
       remoteExists: 'd',
-      remoteInfo: {
-        absolutePath,
-        entryCount: entries.length,
-        dirCount,
-        fileCount,
-        sample,
-        writable,
-      },
+      remoteInfo: { absolutePath, loginCwd, writable },
     };
   } catch (err) {
     return { ok: false, message: `FTP 连接失败：${(err as Error).message}` };
