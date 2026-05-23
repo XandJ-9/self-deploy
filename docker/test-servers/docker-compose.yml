@@ -1,0 +1,45 @@
+# 用于本地联调 M2 服务器连接测试的容器
+#
+# 启动:   docker compose -f docker/test-servers/docker-compose.yml up -d
+# 停止:   docker compose -f docker/test-servers/docker-compose.yml down
+# 重置:   docker compose -f docker/test-servers/docker-compose.yml down -v
+#
+# SFTP : localhost:2222  demo / demo123  远端路径 /upload
+# FTP  : localhost:2121  demo / demo123  远端路径 /
+#
+# 私钥测试: 见 docker/test-servers/README.md
+#
+services:
+  sftp:
+    image: atmoz/sftp:alpine
+    container_name: selfdeploy-sftp
+    # 用户语法: user:pass:[e]:[uid[:gid]]:[dir1,dir2]
+    # 指定 uid=1001 gid=100，确保 mount 卷上的 upload 子目录由 demo 拥有（避免 root 接管导致只读）
+    command: "demo:demo123:1001:100:upload"
+    ports:
+      - "2222:22"
+    volumes:
+      # 持久化用户上传内容，便于反复测试
+      - sftp-data:/home/demo/upload
+      # 可选：把公钥放进来开启私钥登录（取消注释并准备 keys/ 目录）
+      # - ./keys/id_rsa.pub:/home/demo/.ssh/keys/id_rsa.pub:ro
+
+  ftp:
+    image: delfer/alpine-ftp-server:latest
+    container_name: selfdeploy-ftp
+    environment:
+      # 用户语法: name1|pass1[|folder1] [name2|pass2...]
+      USERS: "demo|demo123|/ftp/demo"
+      # 被动模式对外公布的地址，本地直接用 127.0.0.1
+      ADDRESS: "127.0.0.1"
+      MIN_PORT: "21000"
+      MAX_PORT: "21010"
+    ports:
+      - "2121:21"
+      - "21000-21010:21000-21010"
+    volumes:
+      - ftp-data:/ftp/demo
+
+volumes:
+  sftp-data:
+  ftp-data:
