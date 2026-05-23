@@ -42,6 +42,8 @@ async function createWindow(): Promise<void> {
   }
 }
 
+// 开发态与打包版均使用独立的数据目录（见 paths.ts），不再依赖全局 userData。
+
 app.whenReady().then(async () => {
   initDatabase();
 

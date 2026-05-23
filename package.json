@@ -1,7 +1,7 @@
 {
   "name": "self-deploy",
   "productName": "SelfDeploy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "本地项目快速部署到服务器的桌面工具（SFTP/FTP + Git 增量）",
   "main": "dist/main/main/index.js",
   "author": "",

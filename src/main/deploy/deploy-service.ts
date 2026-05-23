@@ -18,9 +18,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import { app } from 'electron';
 import type { ChangedFile, FileAction, ServerRecord, ProjectRecord, DeployStatus } from '../../shared/types';
 import { getDb } from '../db/database';
+import { getAppDataDir } from '../paths';
 import { readCredential } from '../security/credential-vault';
 import { loadIgnoreFilter } from './ignore';
 import { TransportPool } from './transport-pool';
@@ -29,7 +29,7 @@ import { TransportPool } from './transport-pool';
 const UPLOAD_CONCURRENCY = 4;
 
 function openDeployLog(deploymentId: number): { filePath: string; append: (e: DeployLogEvent) => void; close: () => void } {
-  const dir = path.join(app.getPath('userData'), 'deploy-logs');
+  const dir = path.join(getAppDataDir(), 'deploy-logs');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, `${deploymentId}.log`);
   const stream = fs.createWriteStream(filePath, { flags: 'a', encoding: 'utf8' });
@@ -407,6 +407,20 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
     emit(onLog, deploymentId, 'info', `${actionWord}目标根路径 ${deployRoot}（= remoteBasePath + project.remotePath）`);
     emit(onLog, deploymentId, 'info', `创建临时目录 ${tmpRoot}`);
     await primary.mkdirp(tmpRoot);
+
+    // 3.0) 预创建所有去重后的父目录（串行，主连接），避免并发 put 内部 mkdirp 竞态
+    //      sftp/ftp 服务器在多 worker 并发 mkdir 同一目录时会返回 Failure，
+    //      被 ssh2-sftp-client 翻译成 "Bad path ... permission denied"，造成误报。
+    const uniqueDirs = Array.from(
+      new Set(
+        toUpload
+          .map((c) => path.posix.dirname(c.path))
+          .filter((d) => d && d !== '.' && d !== '/'),
+      ),
+    ).sort((a, b) => a.split('/').length - b.split('/').length);
+    for (const rel of uniqueDirs) {
+      await primary.mkdirp(joinPosix(tmpRoot, rel));
+    }
 
     // 3) 上传到临时目录（并发，每条连接处理多个文件）
     let done = 0;

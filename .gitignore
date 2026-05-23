@@ -9,3 +9,6 @@ release/
 # 应用数据（开发期可能落地在工作区）
 *.sqlite
 *.sqlite-journal
+
+# 本地应用数据目录（开发态 SQLite + 部署日志）
+.local-data/

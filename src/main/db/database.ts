@@ -1,17 +1,14 @@
 import Database from 'better-sqlite3';
-import { app } from 'electron';
 import path from 'node:path';
-import fs from 'node:fs';
+import { getAppDataDir } from '../paths';
 
 let db: Database.Database | null = null;
 
 export function initDatabase(): Database.Database {
   if (db) return db;
 
-  const userData = app.getPath('userData');
-  if (!fs.existsSync(userData)) fs.mkdirSync(userData, { recursive: true });
-
-  const dbPath = path.join(userData, 'selfdeploy.sqlite');
+  const dataDir = getAppDataDir();
+  const dbPath = path.join(dataDir, 'selfdeploy.sqlite');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
