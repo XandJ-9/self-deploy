@@ -2,20 +2,59 @@ import { ipcMain, webContents } from 'electron';
 import { z } from 'zod';
 import { IPC } from '../../shared/ipc-channels';
 import type {
+  ChangedFile,
   DeploymentDetail,
   DeploymentFileRecord,
   DeploymentRecord,
+  DeploySource,
   FileAction,
   FileDeployStatus,
 } from '../../shared/types';
 import { getDb } from '../db/database';
 import { runDeploy, runRollback, type DeployLogEvent } from '../deploy/deploy-service';
+import { loadIgnoreFilter } from '../deploy/ignore';
+import { scanFolder } from '../deploy/folder-scan';
 
-const RunSchema = z.object({
-  projectId: z.number().int().positive(),
-  serverId: z.number().int().positive(),
+const GitSourceSchema = z.object({
+  type: z.literal('git'),
   fromCommit: z.string().nullable(),
   toCommit: z.string().min(1),
+});
+
+const FolderSourceSchema = z.object({
+  type: z.literal('folder'),
+  sourceDir: z.string().default(''),
+});
+
+const SourceSchema = z.discriminatedUnion('type', [GitSourceSchema, FolderSourceSchema]);
+
+const RunSchema = z
+  .object({
+    projectId: z.number().int().positive(),
+    serverId: z.number().int().positive(),
+    source: SourceSchema.optional(),
+    // 旧入参兼容（git 模式直传 fromCommit/toCommit）
+    fromCommit: z.string().nullable().optional(),
+    toCommit: z.string().optional(),
+  })
+  .transform((v) => {
+    if (v.source) {
+      return { projectId: v.projectId, serverId: v.serverId, source: v.source };
+    }
+    if (typeof v.toCommit === 'string' && v.toCommit.length > 0) {
+      const src: DeploySource = {
+        type: 'git',
+        fromCommit: v.fromCommit ?? null,
+        toCommit: v.toCommit,
+      };
+      return { projectId: v.projectId, serverId: v.serverId, source: src };
+    }
+    throw new Error('缺少 source 或 toCommit');
+  });
+
+const ScanFolderSchema = z.object({
+  projectId: z.number().int().positive(),
+  sourceDir: z.string().default(''),
 });
 
 const HistoryQuerySchema = z
@@ -74,6 +113,18 @@ function broadcast(evt: DeployLogEvent): void {
 export function registerDeployHandlers(): void {
   ipcMain.handle(IPC.Deploy.Preview, async () => {
     return { ok: false, message: '请使用 git:diff 预览变更' };
+  });
+
+  ipcMain.handle(IPC.Deploy.ScanFolder, (_e, raw: unknown): ChangedFile[] => {
+    const input = ScanFolderSchema.parse(raw);
+    const row = getDb()
+      .prepare('SELECT local_path, exclude_patterns FROM projects WHERE id = ?')
+      .get(input.projectId) as { local_path: string; exclude_patterns: string } | undefined;
+    if (!row) throw new Error(`项目不存在: ${input.projectId}`);
+    const excludes = JSON.parse(row.exclude_patterns) as string[];
+    const filter = loadIgnoreFilter(row.local_path, excludes);
+    const result = scanFolder(row.local_path, input.sourceDir, filter);
+    return result.files;
   });
 
   ipcMain.handle(IPC.Deploy.Run, async (_e, raw: unknown) => {

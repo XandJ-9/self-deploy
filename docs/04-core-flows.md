@@ -2,7 +2,9 @@
 
 ## 1. 变更识别
 
-支持三种模式：
+支持两类来源：**Git 增量** 与 **本地文件夹**。
+
+### 1.1 Git 增量（默认）
 
 | 模式 | from | to | 说明 |
 |---|---|---|---|
@@ -19,6 +21,15 @@ const changes = from
 // → [{ path, action: 'ADD'|'MODIFY'|'DELETE'|'RENAME', oldPath? }]
 ```
 
+### 1.2 本地文件夹（适用于未入库构建产物，如 `dist/`、`build/`）
+
+- 输入：项目根下的子目录 `sourceDir`（留空 / `.` 表示项目根）
+- 扫描逻辑：`src/main/deploy/folder-scan.ts` 递归 `readdirSync`，应用 `loadIgnoreFilter`（`.deployignore` + `excludePatterns`），**强制跳过 `.git`**，不跟随 symlink
+- 输出：`ChangedFile[]`，所有项 `action='ADD'`；path 以 `sourceDir` 为根（上传后映射到远端 `deployRoot` 下同名路径）
+- IPC：`IPC.Deploy.ScanFolder({ projectId, sourceDir })` → 预览用；实际执行部署走 `IPC.Deploy.Run({ source: { type:'folder', sourceDir } })`
+- DB 标记：deployments 行 `from_commit=NULL`，`to_commit='folder:<sourceDir>@<ISO>'`（供历史页区分）
+- **不支持回滚**：本地文件夹模式无前置版本快照，`runRollback` 检测到 `to_commit` 以 `folder:` 开头即报错返回
+
 ## 2. 部署执行（M5 实现）
 
 DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口编排，不感知 SFTP / FTP 差异。
@@ -34,9 +45,10 @@ DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口�
 
 3. 建立连接：createTransport(server, secret).connect()
 
-4. 上传到临时目录 <remoteBase>/.deploy-tmp-<deploymentId>/
+4. 上传到临时目录 `<deployRoot>/.deploy-tmp-<deploymentId>/`（deployRoot = remoteBasePath + project.remotePath，避免上层不可写导致 mkdir Permission denied）
    ├─ 保持目录结构（put 前 mkdirp(parent)）
-   ├─ 未在工作区的文件用 `git show <to>:<path>` 取出到本地 tmp
+   ├─ git 模式：未在工作区的文件用 `git show <to>:<path>` 取出到本地 tmp
+   ├─ folder 模式：源始终为 `<sourceDirAbs>/<relPath>`，不走 git
    └─ 仅上传 ADD/MODIFY/RENAME 的文件
 
 5. 逐文件原子切换到目标路径
@@ -62,6 +74,8 @@ DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口�
 > **Hooks**：上传开始前执行 `pre_deploy_cmd`（失败 → 部署失败）；`removeDir(tmpRoot)` 后执行 `post_deploy_cmd`（失败 → 仅警告）。命令在项目本地路径下用 `child_process.spawn` 执行，POSIX 走 `sh -c`、Windows 走 `cmd.exe /d /s /c`，stdout/stderr 行缓冲转发到日志流。
 
 ## 3. 回滚流程
+
+> 仅限 **Git 模式** 部署。本地文件夹模式的 `deployments.to_commit` 以 `folder:` 开头，`runRollback` 会直接报错拒绝。
 
 ```
 1. 选择某次 success 的历史部署

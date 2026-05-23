@@ -76,3 +76,13 @@ export interface GitCommit {
   author: string;
   date: string;
 }
+
+/**
+ * 部署来源 — 决定上传内容的取材方式。
+ * - git：按提交区间增量取文件（含 ADD/MODIFY/DELETE/RENAME）
+ * - folder：扫描本地子目录，全量当作 ADD 上传
+ */
+export type DeploySource =
+  | { type: 'git'; fromCommit: string | null; toCommit: string }
+  /** sourceDir：相对 project.localPath 的子目录；空串/`.` 表示项目根 */
+  | { type: 'folder'; sourceDir: string };

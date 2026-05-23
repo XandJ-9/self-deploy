@@ -23,6 +23,7 @@ export const IPC = {
   },
   Deploy: {
     Preview: 'deploy:preview',
+    ScanFolder: 'deploy:scanFolder',
     Run: 'deploy:run',
     History: 'deploy:history',
     Detail: 'deploy:detail',

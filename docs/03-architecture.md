@@ -89,7 +89,9 @@ deployment_files(deployment_id, path, action, size, status)
 - `Server.*`：list / create / update / remove / test
 - `Project.*`：list / create / update / remove
 - `Git.*`：log / diff / status
-- `Deploy.*`：run / history / detail / rollback / log / onLog（事件）
+- `Deploy.*`：preview / scanFolder / run / history / detail / rollback / log / onLog（事件）
+  - `Run` 入参为判别联合 `source: { type:'git', fromCommit, toCommit } | { type:'folder', sourceDir }`（也兼容旧形态直传 `fromCommit/toCommit`）
+  - `ScanFolder({ projectId, sourceDir })` 预览本地文件夹模式将上传的文件清单
 
 ## 设计原则
 

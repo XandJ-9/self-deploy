@@ -5,7 +5,8 @@
  *   1. 读取项目 / 服务器 / 凭据
  *   2. simple-git 计算 from..to 的变更清单
  *   3. 创建 deployments 行（status=running）+ deployment_files 行
- *   4. 打开 Transport，上传 ADD/MODIFY/RENAME(new) 到 <remoteBase>/.deploy-tmp-<depId>/
+ *   4. 打开 Transport，上传 ADD/MODIFY/RENAME(new) 到 <deployRoot>/.deploy-tmp-<depId>/
+ *      （deployRoot = remoteBasePath + project.remotePath，确保位于账号可写区内）
  *   5. 全部上传成功后，逐个 rename 覆盖到目标位置（rename 前先删除目标，避免协议差异）
  *   6. 处理 DELETE 与 RENAME(oldPath) 的远端删除
  *   7. 清理 tmp 目录；更新 deployments 行
@@ -18,11 +19,19 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import type { ChangedFile, FileAction, ServerRecord, ProjectRecord, DeployStatus } from '../../shared/types';
+import type {
+  ChangedFile,
+  DeploySource,
+  DeployStatus,
+  FileAction,
+  ProjectRecord,
+  ServerRecord,
+} from '../../shared/types';
 import { getDb } from '../db/database';
 import { getAppDataDir } from '../paths';
 import { readCredential } from '../security/credential-vault';
 import { loadIgnoreFilter } from './ignore';
+import { scanFolder } from './folder-scan';
 import { TransportPool } from './transport-pool';
 
 /** 并发上传连接数；后续可改为读取配置。 */
@@ -48,9 +57,11 @@ function openDeployLog(deploymentId: number): { filePath: string; append: (e: De
 export interface DeployRunParams {
   projectId: number;
   serverId: number;
-  fromCommit: string | null;
-  toCommit: string;
+  source: DeploySource;
 }
+
+/** to_commit 列中本地文件夹模式的前缀标记，用于历史区分与回滚拦截。 */
+export const FOLDER_SOURCE_PREFIX = 'folder:';
 
 export type DeployLogLevel = 'info' | 'warn' | 'error';
 
@@ -228,15 +239,34 @@ function emit(sink: LogSink, deploymentId: number, level: DeployLogLevel, messag
 export async function runDeploy(params: DeployRunParams, onLog: LogSink): Promise<DeployResult> {
   const project = loadProject(params.projectId);
   const server = loadServer(params.serverId);
+  const src = params.source;
 
-  const changes = await diffFiles(project.localPath, params.fromCommit, params.toCommit);
+  if (src.type === 'git') {
+    const changes = await diffFiles(project.localPath, src.fromCommit, src.toCommit);
+    return executeDeployment({
+      project,
+      server,
+      fromCommit: src.fromCommit,
+      toCommit: src.toCommit,
+      changes,
+      fileSource: { kind: 'git', sourceCommit: src.toCommit },
+      mode: 'deploy',
+      onLog,
+    });
+  }
+
+  // folder 模式：扫描本地子目录，全量当作 ADD
+  const filter = loadIgnoreFilter(project.localPath, project.excludePatterns);
+  const scan = scanFolder(project.localPath, src.sourceDir, filter);
+  const relLabel = src.sourceDir?.trim() || '.';
+  const toCommitMarker = `${FOLDER_SOURCE_PREFIX}${relLabel}@${nowIso()}`;
   return executeDeployment({
     project,
     server,
-    fromCommit: params.fromCommit,
-    toCommit: params.toCommit,
-    sourceCommit: params.toCommit,
-    changes,
+    fromCommit: null,
+    toCommit: toCommitMarker,
+    changes: scan.files,
+    fileSource: { kind: 'folder', sourceDirAbs: scan.rootAbs },
     mode: 'deploy',
     onLog,
   });
@@ -266,6 +296,9 @@ export async function runRollback(originDeploymentId: number, onLog: LogSink): P
   if (origin.status !== 'success') {
     throw new Error(`仅成功状态的部署可回滚，当前状态：${origin.status}`);
   }
+  if (origin.to_commit.startsWith(FOLDER_SOURCE_PREFIX)) {
+    throw new Error('本地文件夹模式部署不支持回滚（无前置版本快照）');
+  }
   if (!origin.from_commit) {
     throw new Error('该部署是首次部署（无 fromCommit），无法回滚到上一状态');
   }
@@ -280,13 +313,17 @@ export async function runRollback(originDeploymentId: number, onLog: LogSink): P
     server,
     fromCommit: origin.to_commit,
     toCommit: origin.from_commit,
-    sourceCommit: origin.from_commit,
     changes,
+    fileSource: { kind: 'git', sourceCommit: origin.from_commit },
     mode: 'rollback',
     originDeploymentId,
     onLog,
   });
 }
+
+type FileSourceSpec =
+  | { kind: 'git'; sourceCommit: string }
+  | { kind: 'folder'; sourceDirAbs: string };
 
 interface ExecuteDeploymentParams {
   project: ProjectRecord;
@@ -295,8 +332,8 @@ interface ExecuteDeploymentParams {
   fromCommit: string | null;
   /** 写入 deployments 行的 to_commit */
   toCommit: string;
-  /** 上传内容来自的 commit（rollback 时与 toCommit 相同；正常部署时也相同） */
-  sourceCommit: string;
+  /** 文件内容来源（git commit 或本地目录） */
+  fileSource: FileSourceSpec;
   changes: ChangedFile[];
   mode: 'deploy' | 'rollback';
   /** 仅 rollback：被回滚的原 deployment id，用于日志 */
@@ -305,7 +342,7 @@ interface ExecuteDeploymentParams {
 }
 
 async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResult> {
-  const { project, server, fromCommit, toCommit, sourceCommit, changes, mode } = p;
+  const { project, server, fromCommit, toCommit, fileSource, changes, mode } = p;
 
   // 应用 .deployignore + excludePatterns 过滤
   const filter = loadIgnoreFilter(project.localPath, project.excludePatterns);
@@ -373,7 +410,12 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
 
   const secret = readCredential(server.credentialRef);
   let pool: TransportPool | null = null;
-  const tmpRoot = joinPosix(server.remoteBasePath || '/', `.deploy-tmp-${deploymentId}`);
+  // 临时目录放在「部署根目录」下，而不是 remoteBasePath 下。
+  // 原因：很多 SFTP 账号只对项目子目录有写权限（如 /upload/deploy-projects/data-admin），
+  // 对上层 remoteBasePath（/upload）/ 根目录无权限，会导致 mkdir Permission denied。
+  // 放在部署根目录下还能保证与目标文件同一文件系统，rename 切换更稳定。
+  const deployRoot = joinPosix(server.remoteBasePath || '/', project.remotePath || '/');
+  const tmpRoot = joinPosix(deployRoot, `.deploy-tmp-${deploymentId}`);
 
   const toUpload = kept.filter((c) => c.action !== 'DELETE');
   const toDelete: { path: string }[] = kept
@@ -403,7 +445,6 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
     emit(onLog, deploymentId, 'info', `连接 ${server.protocol.toUpperCase()} ${server.host}:${server.port}（并发 ${poolSize}）`);
     pool = await TransportPool.create(server, secret, poolSize);
     const primary = pool.primary();
-    const deployRoot = joinPosix(server.remoteBasePath || '/', project.remotePath || '/');
     emit(onLog, deploymentId, 'info', `${actionWord}目标根路径 ${deployRoot}（= remoteBasePath + project.remotePath）`);
     emit(onLog, deploymentId, 'info', `创建临时目录 ${tmpRoot}`);
     await primary.mkdirp(tmpRoot);
@@ -425,13 +466,23 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
     // 3) 上传到临时目录（并发，每条连接处理多个文件）
     let done = 0;
     await pool.runAll(toUpload, async (c, t) => {
-      const localAbs = path.join(project.localPath, c.path);
-      let srcPath = localAbs;
+      let srcPath: string;
       let cleanupTmpLocal = false;
-      // rollback 模式：工作区文件未必匹配 sourceCommit；直接从 git 取，避免误用工作区
-      if (mode === 'rollback' || !fs.existsSync(localAbs)) {
-        srcPath = await checkoutBlob(project.localPath, sourceCommit, c.path);
-        cleanupTmpLocal = true;
+      if (fileSource.kind === 'folder') {
+        // 本地文件夹模式：源就是磁盘文件
+        srcPath = path.join(fileSource.sourceDirAbs, c.path);
+        if (!fs.existsSync(srcPath)) {
+          throw new Error(`本地文件已不存在：${srcPath}`);
+        }
+      } else {
+        // git 模式：默认用工作区文件；rollback 或工作区缺失时从 git 取 blob
+        const localAbs = path.join(project.localPath, c.path);
+        if (mode === 'rollback' || !fs.existsSync(localAbs)) {
+          srcPath = await checkoutBlob(project.localPath, fileSource.sourceCommit, c.path);
+          cleanupTmpLocal = true;
+        } else {
+          srcPath = localAbs;
+        }
       }
       const tmpRemote = joinPosix(tmpRoot, c.path);
       try {

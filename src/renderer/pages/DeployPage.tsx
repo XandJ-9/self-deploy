@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Table, Space, Button, Tag, App as AntdApp, Progress } from 'antd';
+import { Select, Table, Space, Button, Tag, App as AntdApp, Progress, Radio, Input } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
-import type { ProjectRecord, GitCommit, ChangedFile, ServerRecord } from '@shared/types';
+import type { ProjectRecord, GitCommit, ChangedFile, ServerRecord, DeploySource } from '@shared/types';
 import PageHero from '../components/PageHero';
+
+type DeployMode = 'git' | 'folder';
 
 interface DeployLogEvent {
   deploymentId: number;
@@ -28,6 +30,8 @@ export default function DeployPage() {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [fromCommit, setFromCommit] = useState<string | null>(null);
   const [toCommit, setToCommit] = useState<string | null>(null);
+  const [mode, setMode] = useState<DeployMode>('git');
+  const [folderSourceDir, setFolderSourceDir] = useState<string>('');
   const [diff, setDiff] = useState<ChangedFile[]>([]);
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<DeployLogEvent[]>([]);
@@ -106,10 +110,38 @@ export default function DeployPage() {
     setDiff(result);
   };
 
-  const runDeploy = async (): Promise<void> => {
-    if (!projectId || !serverId || !toCommit) {
-      message.warning('请先选择项目、服务器与目标提交');
+  const scanFolder = async (): Promise<void> => {
+    if (!projectId) {
+      message.warning('请先选择项目');
       return;
+    }
+    try {
+      const result = await window.api.invoke<ChangedFile[]>(
+        window.api.channels.Deploy.ScanFolder,
+        { projectId, sourceDir: folderSourceDir },
+      );
+      setDiff(result);
+      message.success(`扫描到 ${result.length} 个文件`);
+    } catch (e) {
+      message.error('扫描失败：' + (e as Error).message);
+      setDiff([]);
+    }
+  };
+
+  const runDeploy = async (): Promise<void> => {
+    if (!projectId || !serverId) {
+      message.warning('请先选择项目与服务器');
+      return;
+    }
+    let source: DeploySource;
+    if (mode === 'git') {
+      if (!toCommit) {
+        message.warning('请选择目标提交');
+        return;
+      }
+      source = { type: 'git', fromCommit, toCommit };
+    } else {
+      source = { type: 'folder', sourceDir: folderSourceDir };
     }
     setRunning(true);
     setLogs([]);
@@ -118,8 +150,7 @@ export default function DeployPage() {
       const result = await window.api.invoke<DeployResult>(window.api.channels.Deploy.Run, {
         projectId,
         serverId,
-        fromCommit,
-        toCommit,
+        source,
       });
       if (result.status === 'success') {
         message.success(`部署 #${result.deploymentId} 完成（${result.fileCount} 个文件）`);
@@ -133,13 +164,17 @@ export default function DeployPage() {
     }
   };
 
-  const canRun = !!projectId && !!serverId && !!toCommit && !running;
+  const canRun =
+    !!projectId &&
+    !!serverId &&
+    !running &&
+    (mode === 'git' ? !!toCommit : true);
 
   return (
     <>
       <PageHero
         title="部署"
-        description="选择项目 → 选择服务器 → 选择 Git 提交区间 → 预览变更 → 执行同步"
+        description="选择项目 → 选择服务器 → 选择 Git 提交区间或本地文件夹 → 预览变更 → 执行同步"
         actions={
           <Button
             type="primary"
@@ -152,6 +187,30 @@ export default function DeployPage() {
           </Button>
         }
       />
+
+      <div className="glass-card" style={{ marginBottom: 12 }}>
+        <Space size={16} wrap>
+          <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>部署源：</span>
+          <Radio.Group
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value as DeployMode);
+              setDiff([]);
+            }}
+            optionType="button"
+            buttonStyle="solid"
+            options={[
+              { label: 'Git 增量', value: 'git' },
+              { label: '本地文件夹', value: 'folder' },
+            ]}
+          />
+          <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>
+            {mode === 'git'
+              ? '按 Git 提交区间计算变更（ADD/MODIFY/DELETE/RENAME）。'
+              : '扫描本地子目录，全量上传（适用于 dist/build 等未入库产物；不支持回滚）。'}
+          </span>
+        </Space>
+      </div>
 
       <div className="step-grid">
         <section className="glass-card step">
@@ -211,36 +270,57 @@ export default function DeployPage() {
           <div className="step-head">
             <span className="step-index">2</span>
             <div>
-              <div className="step-title">提交区间</div>
-              <div className="step-sub">From 留空 = 全量首次部署</div>
+              <div className="step-title">{mode === 'git' ? '提交区间' : '本地子目录'}</div>
+              <div className="step-sub">
+                {mode === 'git' ? 'From 留空 = 全量首次部署' : '留空 = 项目根，例如 dist'}
+              </div>
             </div>
           </div>
-          <Space direction="vertical" size={10} style={{ width: '100%' }}>
-            <Select
-              allowClear
-              style={{ width: '100%' }}
-              placeholder="From：留空 = 首次全量"
-              value={fromCommit ?? undefined}
-              onChange={(v) => setFromCommit(v ?? null)}
-              options={commits.map((c) => ({
-                value: c.hash,
-                label: `${c.shortHash}  ${c.message}`,
-              }))}
-            />
-            <Select
-              style={{ width: '100%' }}
-              placeholder="To：要部署到的提交"
-              value={toCommit ?? undefined}
-              onChange={(v) => setToCommit(v)}
-              options={commits.map((c) => ({
-                value: c.hash,
-                label: `${c.shortHash}  ${c.message}`,
-              }))}
-            />
-            <Button type="primary" block disabled={!toCommit} onClick={computeDiff}>
-              计算变更
-            </Button>
-          </Space>
+          {mode === 'git' ? (
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Select
+                allowClear
+                style={{ width: '100%' }}
+                placeholder="From：留空 = 首次全量"
+                value={fromCommit ?? undefined}
+                onChange={(v) => setFromCommit(v ?? null)}
+                options={commits.map((c) => ({
+                  value: c.hash,
+                  label: `${c.shortHash}  ${c.message}`,
+                }))}
+              />
+              <Select
+                style={{ width: '100%' }}
+                placeholder="To：要部署到的提交"
+                value={toCommit ?? undefined}
+                onChange={(v) => setToCommit(v)}
+                options={commits.map((c) => ({
+                  value: c.hash,
+                  label: `${c.shortHash}  ${c.message}`,
+                }))}
+              />
+              <Button type="primary" block disabled={!toCommit} onClick={computeDiff}>
+                计算变更
+              </Button>
+            </Space>
+          ) : (
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Input
+                placeholder="子目录（相对项目根），例如 dist 或 build/output；留空 = 整个项目根"
+                value={folderSourceDir}
+                onChange={(e) => setFolderSourceDir(e.target.value)}
+                allowClear
+              />
+              <Button type="primary" block disabled={!projectId} onClick={scanFolder}>
+                扫描文件
+              </Button>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+                扫描将遵循项目的 excludePatterns / .gitignore 规则，并强制跳过 .git 目录。
+                <br />
+                上传后文件将以该子目录为根，映射到远端部署根。
+              </div>
+            </Space>
+          )}
         </section>
 
         <section className="glass-card step step-stat">
