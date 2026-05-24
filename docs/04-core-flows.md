@@ -23,11 +23,13 @@ const changes = from
 
 ### 1.2 本地文件夹（适用于未入库构建产物，如 `dist/`、`build/`）
 
-- 输入：项目根下的子目录 `sourceDir`（留空 / `.` 表示项目根）
+- 输入：
+  - `sourceDir`：项目根下的子目录（留空 / `.` 表示项目根）
+  - `targetSubDir`（可选）：远端子目录，相对部署根；留空 / `.` 表示直接铺到部署根
 - 扫描逻辑：`src/main/deploy/folder-scan.ts` 递归 `readdirSync`，应用 `loadIgnoreFilter`（`.deployignore` + `excludePatterns`），**强制跳过 `.git`**，不跟随 symlink
-- 输出：`ChangedFile[]`，所有项 `action='ADD'`；path 以 `sourceDir` 为根（上传后映射到远端 `deployRoot` 下同名路径）
-- IPC：`IPC.Deploy.ScanFolder({ projectId, sourceDir })` → 预览用；实际执行部署走 `IPC.Deploy.Run({ source: { type:'folder', sourceDir } })`
-- DB 标记：deployments 行 `from_commit=NULL`，`to_commit='folder:<sourceDir>@<ISO>'`（供历史页区分）
+- 输出：`ChangedFile[]`，所有项 `action='ADD'`；path 以 `sourceDir` 为根（上传后映射到远端 `targetRoot = deployRoot + targetSubDir` 下同名路径）
+- IPC：`IPC.Deploy.ScanFolder({ projectId, sourceDir })` → 预览用（仅决定扫描范围，不涉及远端路径）；实际执行部署走 `IPC.Deploy.Run({ source: { type:'folder', sourceDir, targetSubDir } })`
+- DB 标记：deployments 行 `from_commit=NULL`，`to_commit='folder:<sourceDir>[ → <targetSubDir>]@<ISO>'`（供历史页区分）
 - **不支持回滚**：本地文件夹模式无前置版本快照，`runRollback` 检测到 `to_commit` 以 `folder:` 开头即报错返回
 
 ## 2. 部署执行（M5 实现）
@@ -52,6 +54,7 @@ DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口�
    └─ 仅上传 ADD/MODIFY/RENAME 的文件
 
 5. 逐文件原子切换到目标路径
+   ├─ `targetRoot = deployRoot + targetSubDir`（folder 模式可选），其他场景 targetRoot = deployRoot
    ├─ mkdirp(parent(target))
    ├─ remove(target)  // 幂等，不存在也 OK
    └─ rename(tmpRemote, target)  // SFTP/FTP 的 rename 都不能覆盖，所以必须先 remove

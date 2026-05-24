@@ -91,6 +91,17 @@ function joinPosix(...parts: string[]): string {
   return path.posix.join(...parts.map((p) => p.replace(/\\/g, '/')));
 }
 
+/**
+ * 规范化远端子目录：去掉前后斜杠、反斜杠转正斜杠、"." 视为空。
+ * 输出保证不以 / 开头/结尾，便于 joinPosix。
+ */
+function normalizeSubDir(input: string | undefined | null): string {
+  if (!input) return '';
+  const cleaned = String(input).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (cleaned === '' || cleaned === '.') return '';
+  return cleaned;
+}
+
 /** 执行本地 shell 命令；按行回调 onLine。返回 exit code（null 视为 -1）。 */
 function runShell(
   cmd: string,
@@ -259,7 +270,9 @@ export async function runDeploy(params: DeployRunParams, onLog: LogSink): Promis
   const filter = loadIgnoreFilter(project.localPath, project.excludePatterns);
   const scan = scanFolder(project.localPath, src.sourceDir, filter);
   const relLabel = src.sourceDir?.trim() || '.';
-  const toCommitMarker = `${FOLDER_SOURCE_PREFIX}${relLabel}@${nowIso()}`;
+  const targetSubDir = normalizeSubDir(src.targetSubDir);
+  const targetLabel = targetSubDir ? ` → ${targetSubDir}` : '';
+  const toCommitMarker = `${FOLDER_SOURCE_PREFIX}${relLabel}${targetLabel}@${nowIso()}`;
   return executeDeployment({
     project,
     server,
@@ -267,6 +280,7 @@ export async function runDeploy(params: DeployRunParams, onLog: LogSink): Promis
     toCommit: toCommitMarker,
     changes: scan.files,
     fileSource: { kind: 'folder', sourceDirAbs: scan.rootAbs },
+    targetSubDir,
     mode: 'deploy',
     onLog,
   });
@@ -338,11 +352,17 @@ interface ExecuteDeploymentParams {
   mode: 'deploy' | 'rollback';
   /** 仅 rollback：被回滚的原 deployment id，用于日志 */
   originDeploymentId?: number;
+  /**
+   * 远端目标子目录（相对部署根），仅 folder 模式使用；
+   * 已由调用方规范化（无前后斜杠、空表示直部署到部署根）。
+   */
+  targetSubDir?: string;
   onLog: LogSink;
 }
 
 async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResult> {
   const { project, server, fromCommit, toCommit, fileSource, changes, mode } = p;
+  const targetSubDir = normalizeSubDir(p.targetSubDir);
 
   // 应用 .deployignore + excludePatterns 过滤
   const filter = loadIgnoreFilter(project.localPath, project.excludePatterns);
@@ -415,6 +435,9 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
   // 对上层 remoteBasePath（/upload）/ 根目录无权限，会导致 mkdir Permission denied。
   // 放在部署根目录下还能保证与目标文件同一文件系统，rename 切换更稳定。
   const deployRoot = joinPosix(server.remoteBasePath || '/', project.remotePath || '/');
+  // 实际目标根：folder 模式可叠加 targetSubDir，rename 目标会落在这里
+  const targetRoot = targetSubDir ? joinPosix(deployRoot, targetSubDir) : deployRoot;
+  // 临时目录始终放在 deployRoot 下（不进入 targetSubDir），确保 rename 跨子目录仍在同一文件系统
   const tmpRoot = joinPosix(deployRoot, `.deploy-tmp-${deploymentId}`);
 
   const toUpload = kept.filter((c) => c.action !== 'DELETE');
@@ -446,6 +469,9 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
     pool = await TransportPool.create(server, secret, poolSize);
     const primary = pool.primary();
     emit(onLog, deploymentId, 'info', `${actionWord}目标根路径 ${deployRoot}（= remoteBasePath + project.remotePath）`);
+    if (targetSubDir) {
+      emit(onLog, deploymentId, 'info', `远端子目录 ${targetSubDir} → 实际目标根 ${targetRoot}`);
+    }
     emit(onLog, deploymentId, 'info', `创建临时目录 ${tmpRoot}`);
     await primary.mkdirp(tmpRoot);
 
@@ -504,7 +530,7 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
     emit(onLog, deploymentId, 'info', '上传完成，开始切换到目标路径');
     for (const c of toUpload) {
       const tmpRemote = joinPosix(tmpRoot, c.path);
-      const target = joinPosix(server.remoteBasePath || '/', project.remotePath || '/', c.path);
+      const target = joinPosix(targetRoot, c.path);
       await primary.mkdirp(path.posix.dirname(target));
       await primary.remove(target);
       await primary.rename(tmpRemote, target);
@@ -513,7 +539,7 @@ async function executeDeployment(p: ExecuteDeploymentParams): Promise<DeployResu
 
     // 5) 删除远端文件
     for (const d of toDelete) {
-      const target = joinPosix(server.remoteBasePath || '/', project.remotePath || '/', d.path);
+      const target = joinPosix(targetRoot, d.path);
       emit(onLog, deploymentId, 'info', `删除远端 ${d.path}`);
       await primary.remove(target);
       updateFileStatus.run('success', deploymentId, d.path);

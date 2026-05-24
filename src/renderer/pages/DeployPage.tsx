@@ -32,6 +32,7 @@ export default function DeployPage() {
   const [toCommit, setToCommit] = useState<string | null>(null);
   const [mode, setMode] = useState<DeployMode>('git');
   const [folderSourceDir, setFolderSourceDir] = useState<string>('');
+  const [folderTargetSubDir, setFolderTargetSubDir] = useState<string>('');
   const [diff, setDiff] = useState<ChangedFile[]>([]);
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<DeployLogEvent[]>([]);
@@ -75,6 +76,15 @@ export default function DeployPage() {
     const joined = (base + '/' + sub).replace(/\/+/g, '/');
     return joined === '' ? '/' : joined;
   }, [project, server]);
+
+  /** folder 模式下叠加远端子目录后的实际目标根。 */
+  const effectiveTargetRoot = useMemo(() => {
+    if (!deployRoot) return null;
+    if (mode !== 'folder') return deployRoot;
+    const sub = folderTargetSubDir.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!sub || sub === '.') return deployRoot;
+    return (deployRoot.replace(/\/$/, '') + '/' + sub).replace(/\/+/g, '/');
+  }, [deployRoot, mode, folderTargetSubDir]);
 
   // 项目变化时，自动选择默认服务器
   useEffect(() => {
@@ -141,7 +151,7 @@ export default function DeployPage() {
       }
       source = { type: 'git', fromCommit, toCommit };
     } else {
-      source = { type: 'folder', sourceDir: folderSourceDir };
+      source = { type: 'folder', sourceDir: folderSourceDir, targetSubDir: folderTargetSubDir };
     }
     setRunning(true);
     setLogs([]);
@@ -256,10 +266,14 @@ export default function DeployPage() {
                   padding: '8px 10px',
                 }}
               >
-                实际部署到：<code style={{ color: '#7dd3fc' }}>{deployRoot}</code>
+                实际部署到：<code style={{ color: '#7dd3fc' }}>{effectiveTargetRoot}</code>
                 <div style={{ opacity: 0.6, marginTop: 4 }}>
                   = 服务器 remoteBasePath（{server?.remoteBasePath || '/'}）+ 项目 remotePath（
-                  {project?.remotePath || '空'}）。请确认该路径在服务器（chroot 后）视角下可写。
+                  {project?.remotePath || '空'}）
+                  {mode === 'folder' && folderTargetSubDir.trim()
+                    ? ` + 远端子目录（${folderTargetSubDir.trim()}）`
+                    : ''}
+                  。请确认该路径在服务器（chroot 后）视角下可写。
                 </div>
               </div>
             )}
@@ -306,9 +320,15 @@ export default function DeployPage() {
           ) : (
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
               <Input
-                placeholder="子目录（相对项目根），例如 dist 或 build/output；留空 = 整个项目根"
+                placeholder="本地子目录（相对项目根），例如 dist 或 build/output；留空 = 整个项目根"
                 value={folderSourceDir}
                 onChange={(e) => setFolderSourceDir(e.target.value)}
+                allowClear
+              />
+              <Input
+                placeholder="远端子目录（相对部署根），例如 static 或 v2/assets；留空 = 直接铺到部署根"
+                value={folderTargetSubDir}
+                onChange={(e) => setFolderTargetSubDir(e.target.value)}
                 allowClear
               />
               <Button type="primary" block disabled={!projectId} onClick={scanFolder}>
@@ -317,7 +337,7 @@ export default function DeployPage() {
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
                 扫描将遵循项目的 excludePatterns / .gitignore 规则，并强制跳过 .git 目录。
                 <br />
-                上传后文件将以该子目录为根，映射到远端部署根。
+                上传后文件将以本地子目录为根，映射到远端目标根（部署根 + 远端子目录）下。
               </div>
             </Space>
           )}

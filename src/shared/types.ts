@@ -84,5 +84,10 @@ export interface GitCommit {
  */
 export type DeploySource =
   | { type: 'git'; fromCommit: string | null; toCommit: string }
-  /** sourceDir：相对 project.localPath 的子目录；空串/`.` 表示项目根 */
-  | { type: 'folder'; sourceDir: string };
+  /**
+   * 本地文件夹模式：
+   * - sourceDir：相对 project.localPath 的子目录；空串/`.` 表示项目根
+   * - targetSubDir（可选）：相对部署根（remoteBasePath + project.remotePath）的远端子目录；
+   *   留空表示直接铺到部署根下；填写后实际目标为 `deployRoot/targetSubDir/<file>`。
+   */
+  | { type: 'folder'; sourceDir: string; targetSubDir?: string };

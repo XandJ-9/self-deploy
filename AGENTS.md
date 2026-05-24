@@ -69,6 +69,10 @@ src/
 - **小文件**：单文件 < 400 行；handler 文件按领域拆分（已有 server/project/git/deploy 四类）。
 - **样式**：渲染层使用 `global.css` 中的 CSS 变量与 `.glass-card` / `PageHero` 模式，不要重新引入 AntD `Layout/Sider/Header`（已被深色 shell 替代）。
 - **安全**：`contextIsolation: true`、`nodeIntegration: false`、`sandbox` 友好，不要为方便而关闭。
+- **变更记录（强制）**：每次**新增功能**或**修复 bug**都必须在 [changelog.md](./changelog.md) 顶部追加一条记录。
+  - 按日期**倒序**：最新日期置顶；同日内最新条目置顶。
+  - 列表格式：`- feat(模块): xxxx` 或 `- bugfix(模块): xxxx`。
+  - 模块名建议与「功能模块映射」对齐（如 `server` / `project` / `git` / `deploy` / `transport` / `db` / `security` / `renderer` / `docs` 等）。
 
 详细 OWASP 对齐：[docs/05-security.md](./docs/05-security.md)。
 
@@ -126,3 +130,4 @@ docker compose -f docker/test-servers/docker-compose.yml up -d
 - [ ] IPC 入参有 Zod 校验
 - [ ] 涉密字段走 `credential-vault`，未明文落库
 - [ ] 渲染层未引入 node/electron 直接依赖
+- [ ] [changelog.md](./changelog.md) 已追加本次 `feat` / `bugfix` 记录（日期倒序）

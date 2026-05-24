@@ -132,14 +132,17 @@ body {
 }
 
 .page-hero {
-  background: var(--surface);
+  background: rgba(15, 20, 40, 0.72);
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 24px 28px;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  position: relative;
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  position: sticky;
+  top: 16px;
+  z-index: 20;
   overflow: hidden;
+  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.55);
 }
 .page-hero::before {
   content: '';

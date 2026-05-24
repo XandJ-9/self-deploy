@@ -24,6 +24,8 @@ const GitSourceSchema = z.object({
 const FolderSourceSchema = z.object({
   type: z.literal('folder'),
   sourceDir: z.string().default(''),
+  /** 远端子目录，相对部署根；空串 / `.` 表示直接部署到部署根 */
+  targetSubDir: z.string().default(''),
 });
 
 const SourceSchema = z.discriminatedUnion('type', [GitSourceSchema, FolderSourceSchema]);
