@@ -23,6 +23,13 @@ deleteCredential(ref): void
 
 > 渲染端**不可**直接调用 `readCredential`。所有需要明文的场景都在主进程内部使用完后即丢弃。
 
+### Tauri 迁移目标
+
+- 数据库仍只保存 `credential_ref`，不保存密码/私钥明文
+- Rust 后端优先使用系统钥匙串等价能力（计划评估 `keyring` crate）；如需跨平台加密文件库，再评估 Tauri Stronghold 插件
+- 前端只能通过 Tauri command 提交或刷新凭据，不能读取明文
+- Tauri capabilities 默认只开放必要能力；文件选择使用 dialog 插件，任意文件系统读写只允许 Rust 后端内部执行
+
 ## OWASP Top 10 对齐
 
 | 项 | 措施 |
@@ -46,6 +53,16 @@ webPreferences: {
   sandbox: false, // 主进程允许文件系统访问，故 false；但渲染端通过 contextBridge 限制
 }
 ```
+
+## Tauri 安全配置
+
+`src-tauri/capabilities/default.json` 初始只开放：
+
+```json
+["core:default", "dialog:default"]
+```
+
+后续新增文件系统、shell、updater 等插件时，必须同步收窄 capability 权限并更新本文档。
 
 `preload` 仅暴露：
 

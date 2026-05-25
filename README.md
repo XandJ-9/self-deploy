@@ -1,6 +1,6 @@
 # SelfDeploy
 
-本地项目快速部署到服务器的桌面工具。基于 **Electron + React + TypeScript**，使用 **SFTP/FTP** 上传，通过 **Git 提交区间** 识别变更并增量同步。
+本地项目快速部署到服务器的桌面工具。当前稳定版基于 **Electron + React + TypeScript**，Tauri 迁移分支正在将桌面后端迁移到 **Tauri v2 + Rust**。应用使用 **SFTP/FTP** 上传，通过 **Git 提交区间** 识别变更并增量同步。
 
 > 📚 完整设计文档见 [docs/](./docs/README.md)：需求、技术选型、架构、核心流程、安全设计、里程碑、依赖清单。
 
@@ -29,9 +29,10 @@
 
 | 层 | 选型 |
 |---|---|
-| 桌面框架 | Electron 32 |
+| 桌面框架 | Electron 32（稳定版）/ Tauri v2（迁移中） |
 | 渲染层 | React 18 + Vite + Ant Design 5 |
 | 主进程 | Node 22 + better-sqlite3 + simple-git |
+| Tauri 后端 | Rust + Tauri commands（迁移中） |
 | 同步协议 | ssh2-sftp-client / basic-ftp |
 | 凭据安全 | Electron `safeStorage` (OS 钥匙串) |
 | 校验 | Zod |
@@ -49,6 +50,7 @@ src/
 └── renderer/         # React UI
     ├── pages/
     └── types/
+src-tauri/            # Tauri v2 后端（迁移中）
 ```
 
 ## 开发
@@ -59,10 +61,12 @@ src/
 |---|---|
 | `npm install` | 装依赖；`postinstall` 会自动为当前 Electron 架构编译 native 模块 |
 | `npm run dev` | 常规开发启动（跨平台，Vite + Electron 并发） |
+| `npm run dev:tauri` | Tauri 开发启动（需要 Rust 工具链） |
 | `npm run dev:fresh` | 先 `rebuild:dev` 再 `dev`；架构错乱（如刚打过包）时一键修复 |
 | `npm run rebuild:dev` | 仅为当前平台/Electron 重建 `better-sqlite3` 等 native 模块 |
 | `npm run lint` | 主 + 渲染双 `tsc --noEmit`，提交前必跑 |
 | `npm run build` | 编译主进程 + 渲染产物到 `dist/` |
+| `npm run build:tauri` | Tauri 打包（需要 Rust 工具链） |
 | `npm test` | Vitest 单元测试 |
 
 ### macOS（arm64 / Intel）
@@ -115,6 +119,7 @@ npm run package      # electron-builder 输出到 release/
 | M5 部署执行 | ✅ | 上传/删除/临时目录原子切换、进度与日志流 |
 | M6 历史与回滚 | ✅ | 历史筛选、文件级清单、反向 diff 一键回滚 |
 | M7 增强 | ✅ | `.deployignore`、部署前后 Hook、并发上传、日志落盘、FTP 端到端验证 |
+| M8 Tauri 迁移 | 🚧 | 保留 React UI，逐步迁移 Electron 主进程到 Tauri v2 + Rust |
 
 ## 安全说明
 

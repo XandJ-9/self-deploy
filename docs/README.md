@@ -13,3 +13,4 @@
 | [05-security.md](./05-security.md) | 安全设计（凭据保险柜、OWASP 对齐） |
 | [06-roadmap.md](./06-roadmap.md) | 开发里程碑与状态 |
 | [07-dependencies.md](./07-dependencies.md) | 关键依赖清单及用途 |
+| [08-tauri-migration-plan.md](./08-tauri-migration-plan.md) | Tauri 迁移方案与阶段计划 |

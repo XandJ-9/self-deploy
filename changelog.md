@@ -6,6 +6,11 @@
 > - `feat(模块): 描述`
 > - `bugfix(模块): 描述`
 
+## 2026-05-26
+
+- feat(db): Tauri 后端接入 SQLite 初始化与 Project 增删改查，Server/Project 列表开始读取真实数据库
+- feat(tauri): 新增 Tauri v2 迁移脚手架、前端 runtime API 兼容层与迁移方案文档
+
 ## 2026-05-24
 
 - feat(renderer): 模块页面顶部 `PageHero` 卡片改为吸顶（sticky），加深背景与模糊度避免内容透出，纵向滚动时始终可见

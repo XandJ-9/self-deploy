@@ -1,4 +1,4 @@
-import type { AppApi } from '../../preload';
+import type { AppApi } from '../api/runtime-api';
 
 declare global {
   interface Window {

@@ -2,6 +2,8 @@
 
 ## 进程结构
 
+> 当前稳定版为 Electron 架构；Tauri 迁移见下方「Tauri 目标架构」。迁移期前端会通过统一 `window.api` 兼容层同时支持 Electron preload 与 Tauri runtime。
+
 ```
 ┌───────────────────────────────────────────────┐
 │  Renderer (React + AntD)                      │
@@ -49,6 +51,45 @@ src/
     └── types/
 ```
 
+## Tauri 目标架构
+
+```
+┌───────────────────────────────────────────────┐
+│  Renderer (React + AntD + Vite)               │
+│  ├─ 复用现有页面与 Zustand 状态                │
+│  └─ runtime-api.ts 统一封装 invoke/listen      │
+└──────────────┬────────────────────────────────┘
+               │ Tauri invoke / event / plugin
+┌──────────────▼────────────────────────────────┐
+│  src-tauri (Rust)                             │
+│  ├─ commands::*       (强类型 command)        │
+│  ├─ db::*             (SQLite + migration)    │
+│  ├─ security::*       (系统钥匙串凭据引用)     │
+│  ├─ git::*            (git CLI / git2)         │
+│  ├─ transport::*      (SFTP / FTP adapter)     │
+│  └─ deploy::*         (diff → 上传 → 记录)     │
+└──────────────┬────────────────────────────────┘
+               │
+        ┌──────▼─────┐   ┌───────────────┐
+        │  SQLite DB │   │ OS Keychain   │
+        └────────────┘   └───────────────┘
+```
+
+### Tauri 迁移期目录
+
+```
+src-tauri/
+├── tauri.conf.json
+├── capabilities/
+│   └── default.json
+├── Cargo.toml
+└── src/
+    ├── main.rs
+    └── commands.rs      # 当前为 channel 兼容占位，后续按领域拆分
+```
+
+迁移完成后，Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置可以删除；迁移期保留它们作为可运行基线。
+
 ## 数据模型（SQLite）
 
 ```sql
@@ -92,6 +133,13 @@ deployment_files(deployment_id, path, action, size, status)
 - `Deploy.*`：preview / scanFolder / run / history / detail / rollback / log / onLog（事件）
   - `Run` 入参为判别联合 `source: { type:'git', fromCommit, toCommit } | { type:'folder', sourceDir }`（也兼容旧形态直传 `fromCommit/toCommit`）
   - `ScanFolder({ projectId, sourceDir })` 预览本地文件夹模式将上传的文件清单
+
+### Tauri command 约定
+
+- 迁移期：前端调用 `window.api.invoke(channel, ...args)`，Tauri runtime 下转发为 `invoke_channel({ channel, args })`
+- 稳定后：每个领域拆成强类型 command，例如 `server_list` / `project_create` / `deploy_run`
+- 事件：部署日志沿用 `deploy:onLog` 名称，Tauri 后端通过 event emit 推送
+- 入参校验：Rust command 使用 `serde` 结构体反序列化 + 领域校验替代 Electron 版 Zod；渲染端表单校验继续保留
 
 ## 设计原则
 
