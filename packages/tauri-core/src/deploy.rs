@@ -943,9 +943,7 @@ fn action_name(action: FileAction) -> &'static str {
 
 fn create_log_path(app: &AppHandle, deployment_id: i64) -> Result<PathBuf, String> {
     let dir = if cfg!(debug_assertions) {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .ok_or_else(|| "无法解析仓库根目录".to_string())?
+        repo_root()?
             .join(".local-data")
             .join("deploy-logs")
     } else {
@@ -956,6 +954,15 @@ fn create_log_path(app: &AppHandle, deployment_id: i64) -> Result<PathBuf, Strin
     };
     fs::create_dir_all(&dir).map_err(to_string)?;
     Ok(dir.join(format!("{deployment_id}.log")))
+}
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(|packages_dir| packages_dir.parent())
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法解析仓库根目录".to_string())
 }
 
 fn emit_log(

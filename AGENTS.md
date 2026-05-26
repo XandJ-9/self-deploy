@@ -1,16 +1,16 @@
 # SelfDeploy — Agent Guide
 
-本地项目快速部署到服务器的桌面工具（Windows Tauri + React + Rust + SFTP/FTP + Git 增量）。
+本地项目快速部署到服务器的桌面工具（macOS / Windows Tauri + React + Rust + SFTP/FTP + Git 增量）。
 
 > **必读**：所有设计决策均沉淀在 [docs/](./docs/README.md)，新功能开工前先看对应章节，不要凭空猜测。
 
 ## 技术栈（固定，勿替换）
 
-- **桌面**：Tauri v2（Windows 主线）
+- **桌面**：Tauri v2（macOS / Windows 主线）
 - **渲染**：React 18 + Vite 5 + Ant Design 5 + React Router（HashRouter）+ Zustand
-- **后端**：Rust + Tauri commands + rusqlite + Windows DPAPI + ssh2/ftp
+- **后端**：Rust + Tauri commands + rusqlite + Windows DPAPI / macOS Keychain + ssh2/ftp
 - **同步协议**：ssh2 / ftp
-- **凭据加密**：Windows DPAPI（系统钥匙串）
+- **凭据加密**：Windows DPAPI / macOS Keychain（系统安全设施）
 - **校验**：serde + 前端表单校验（必要时辅以 Zod）
 - **测试**：Vitest
 
@@ -24,46 +24,47 @@ npm run lint             # 主+渲染双 tsc --noEmit，提交前必跑
 npm run build            # Tauri 打包
 npm test                 # vitest run
 npm run dev:win          # Windows 主线入口（Tauri）
-npm run dev:mac          # macOS 主线入口（Electron）
+npm run dev:mac          # macOS 主线入口（Tauri）
 npm run legacy:dev       # Electron 回退启动
 ```
 
 构建产物路径已固定，**勿改**：
-- 主进程编译到 `dist/main/main/index.js`（`package.json` 的 `main` 字段指向此处）
-- 预加载到 `dist/main/preload/index.js`
-- 渲染到 `dist/renderer/`，生产环境 `loadFile('../../renderer/index.html')`
+- 渲染到 `dist/renderer/`，Tauri 生产环境通过 `frontendDist = "../../dist/renderer"` 加载
+- macOS Tauri 产物在 `apps/mac-tauri/target/release/bundle/`
+- Windows Tauri 产物在 `apps/win-tauri/target/release/bundle/`
+- 归集后的最终发布包统一放到 `release/final/`
+- legacy Electron 主进程/预加载仍编译到 `dist/main/`，仅供 `legacy:*` 回退脚本使用
 
 ## 三个 tsconfig（容易踩坑）
 
 | 文件 | 用途 | 输出 |
 |---|---|---|
-| `tsconfig.json` | 仅提供路径别名 `@shared/*`、`@renderer/*` 给编辑器 | — |
-| `tsconfig.main.json` | 主进程/预加载/shared，CommonJS | `dist/main/` |
+| `tsconfig.json` | 提供路径别名 `@renderer/*`、`@domain/*`、`@ipc-contract/*` 等给编辑器 | — |
+| `tsconfig.main.json` | legacy Electron 主进程/预加载，CommonJS | `dist/main/` |
 | `tsconfig.renderer.json` | 渲染层，ESM，`noEmit`（Vite 负责打包） | — |
 
-修改 `apps/win-tauri/**` 后必须重跑 `npm run build`（或相应的 Rust/Tauri 检查命令），否则桌面应用加载旧代码。
+修改 `packages/tauri-core/**` 或 `apps/*-tauri/**` 后必须重跑对应 Rust/Tauri 检查命令，否则桌面应用加载旧代码。
 
 ## 职责边界（CRITICAL — 不要越界）
 
 ```
-src/
-├── shared/          # 纯类型与常量。禁止 import 任何 node/electron/react 模块
-└── renderer/        # 纯 UI + 前端运行时代码。禁止 require('fs'/'electron'/...)，必须经 window.api
-  ├── pages/       # 路由级页面，对应一个业务领域
-  ├── api/         # runtime 兼容层
-  ├── components/  # 共享组件（如 PageHero）
-  └── styles/      # global.css（深色玻璃拟态主题，勿替换主色）
-apps/win-tauri/      # Windows Tauri 主线后端。所有文件、网络、Git、DB、密钥能力只允许在这里
-apps/mac-electron/   # macOS Electron 主线后端壳
+apps/mac-tauri/      # macOS Tauri 主线壳
+apps/win-tauri/      # Windows Tauri 主线壳
+apps/mac-electron/   # macOS Electron legacy 壳
 apps/shared-renderer/# 双端共享渲染层
-packages/            # domain / ipc-contract / platform-adapter / testkit
+  ├── pages/         # 路由级页面，对应一个业务领域
+  ├── api/           # runtime 兼容层
+  ├── components/    # 共享组件（如 PageHero）
+  └── styles/        # global.css（深色玻璃拟态主题，勿替换主色）
+packages/tauri-core/ # Win/Mac Tauri 共享 Rust 后端。文件、网络、Git、DB、密钥能力默认在这里实现
+packages/            # domain / ipc-contract / platform-adapter / testkit。纯类型与协议禁止依赖 node/electron/react
 ```
 
 **铁律**：
-1. 渲染进程 ↔ 后端**只通过** `window.api.invoke(channel, ...args)`。Channel 常量在 `src/shared/ipc-channels.ts`，新增 channel 必须先加到那里。
+1. 渲染进程 ↔ 后端**只通过** `window.api.invoke(channel, ...args)`。Channel 常量在 `packages/ipc-contract/src/ipc-channels.ts`，新增 channel 必须先加到那里。
 2. 凭据明文**禁止**写入 `servers` 表或日志。新增涉密字段 → 用 `credential-vault` 存 ref，表里只存 ref。
-3. IPC handler 入参**必须** Zod 校验后再用，参考 `server-handlers.ts` 写法。
-4. 共用类型放 `src/shared/types.ts`，主/渲染都从此处 import；不要在两边重复定义。
+3. Tauri command 入参必须通过 `serde` 结构体反序列化与领域校验后再用；legacy Electron handler 仍按 Zod 白名单校验。
+4. 共用类型放 `packages/domain` / `packages/ipc-contract`，前后端不要重复定义。
 
 ## 开发规范
 
@@ -83,11 +84,11 @@ packages/            # domain / ipc-contract / platform-adapter / testkit
 
 | 领域 | IPC handlers | UI 页面 | 文档 |
 |---|---|---|---|
-| 服务器管理 | `apps/win-tauri/src/db.rs` + `apps/win-tauri/src/transport.rs` | `apps/shared-renderer/src/pages/ServersPage.tsx` | [04-core-flows §服务器](./docs/04-core-flows.md) |
-| 项目管理 | `apps/win-tauri/src/db.rs` | `apps/shared-renderer/src/pages/ProjectsPage.tsx` | 同上 |
-| Git 差异 | `apps/win-tauri/src/git.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §变更识别](./docs/04-core-flows.md) |
-| 部署执行（M5） | `apps/win-tauri/src/deploy.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §部署](./docs/04-core-flows.md) |
-| 历史/回滚（M6） | 待建 | `HistoryPage.tsx` | [06-roadmap.md](./docs/06-roadmap.md) |
+| 服务器管理 | `packages/tauri-core/src/db.rs` + `packages/tauri-core/src/transport.rs` | `apps/shared-renderer/src/pages/ServersPage.tsx` | [04-core-flows §服务器](./docs/04-core-flows.md) |
+| 项目管理 | `packages/tauri-core/src/db.rs` | `apps/shared-renderer/src/pages/ProjectsPage.tsx` | 同上 |
+| Git 差异 | `packages/tauri-core/src/git.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §变更识别](./docs/04-core-flows.md) |
+| 部署执行（M5） | `packages/tauri-core/src/deploy.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §部署](./docs/04-core-flows.md) |
+| 历史/回滚（M6） | `packages/tauri-core/src/deploy.rs` + `packages/tauri-core/src/db.rs` | `apps/shared-renderer/src/pages/HistoryPage.tsx` | [06-roadmap.md](./docs/06-roadmap.md) |
 
 当前进度与下一步：[docs/06-roadmap.md](./docs/06-roadmap.md)。
 
@@ -108,7 +109,7 @@ packages/            # domain / ipc-contract / platform-adapter / testkit
 
 ## 常见坑
 
-- 修改 `apps/win-tauri/**` 后忘记重跑 `npm run build`，会导致桌面应用加载旧 Rust 后端。
+- 修改 `packages/tauri-core/**` 或 `apps/*-tauri/**` 后忘记重跑对应构建，会导致桌面应用加载旧 Rust 后端。
 - `window.api` 暴露的方法签名是**变参** `invoke<T>(channel, ...args)`，不要回退成单参数。
 - SQLite 路径在应用数据目录下，开发期清库时删除对应的 `selfdeploy.sqlite*` 文件。
 - `legacy:*` 只做回退参考，不要把新功能继续加到旧路径 `src/main/**` 或 `src/preload/**`。
@@ -130,7 +131,7 @@ docker compose -f docker/test-servers/docker-compose.yml up -d
 - [ ] `npm run lint` 通过（双 tsc）
 - [ ] `npm run build` 通过
 - [ ] 涉及上表「文档同步规则」的文档已更新
-- [ ] IPC 入参有 Zod 校验
+- [ ] Tauri command 入参有 `serde` 反序列化与领域校验；legacy IPC 入参有 Zod 校验
 - [ ] 涉密字段走 `credential-vault`，未明文落库
 - [ ] 渲染层未引入 node/electron 直接依赖
 - [ ] [changelog.md](./changelog.md) 已追加本次 `feat` / `bugfix` 记录（日期倒序）

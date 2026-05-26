@@ -38,7 +38,7 @@ jobs:
       - name: Build windows app (Tauri)
         run: npm run build:win
 
-  build-mac-electron:
+  build-mac-tauri:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +46,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
       - name: Install deps
         run: npm ci
-      - name: Build mac app shell (Electron)
+      - name: Build mac app (Tauri)
         run: npm run build:mac

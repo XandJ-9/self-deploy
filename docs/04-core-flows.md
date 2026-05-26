@@ -26,7 +26,7 @@ const changes = from
 - 输入：
   - `sourceDir`：项目根下的子目录（留空 / `.` 表示项目根）
   - `targetSubDir`（可选）：远端子目录，相对部署根；留空 / `.` 表示直接铺到部署根
-- 扫描逻辑：`src/main/deploy/folder-scan.ts` 递归 `readdirSync`，应用 `loadIgnoreFilter`（`.deployignore` + `excludePatterns`），**强制跳过 `.git`**，不跟随 symlink
+- 扫描逻辑：`packages/tauri-core/src/deploy.rs` 递归本地目录，应用 `.deployignore` + `excludePatterns`，**强制跳过 `.git`**，不跟随 symlink
 - 输出：`ChangedFile[]`，所有项 `action='ADD'`；path 以 `sourceDir` 为根（上传后映射到远端 `targetRoot = deployRoot + targetSubDir` 下同名路径）
 - IPC：`IPC.Deploy.ScanFolder({ projectId, sourceDir })` → 预览用（仅决定扫描范围，不涉及远端路径）；实际执行部署走 `IPC.Deploy.Run({ source: { type:'folder', sourceDir, targetSubDir } })`
 - DB 标记：deployments 行 `from_commit=NULL`，`to_commit='folder:<sourceDir>[ → <targetSubDir>]@<ISO>'`（供历史页区分）
@@ -34,12 +34,12 @@ const changes = from
 
 ## 2. 部署执行（M5 实现）
 
-DeployService（Tauri：`src-tauri/src/deploy.rs`）面向 Transport 接口编排，不感知 SFTP / FTP 差异。
+DeployService（Tauri：`packages/tauri-core/src/deploy.rs`）面向 Transport 接口编排，不感知 SFTP / FTP 差异。
 
 ```
 1. 校验
    ├─ 项目/服务器记录存在
-   └─ 凭据可读（safeStorage 解密）
+   └─ 凭据可读（Windows DPAPI / macOS Keychain）
 
 2. 计算差异→生成文件清单
    ├─ from=null 走 ls-tree -r；from 有值走 diff --name-status

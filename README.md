@@ -1,18 +1,20 @@
 # SelfDeploy
 
-本地项目快速部署到服务器的桌面工具。当前分支主线为 **Windows Tauri v2 + Rust + React + TypeScript**；`src/main` 与 `src/preload` 仅作为 legacy 基线保留。应用使用 **SFTP/FTP** 上传，通过 **Git 提交区间** 识别变更并增量同步。
+本地项目快速部署到服务器的桌面工具。当前主线为 **macOS / Windows Tauri v2 + Rust + React + TypeScript**；Electron 仅作为 legacy 基线保留。应用使用 **SFTP/FTP** 上传，通过 **Git 提交区间** 识别变更并增量同步。
 
 > 📚 完整设计文档见 [docs/](./docs/README.md)：需求、技术选型、架构、核心流程、安全设计、里程碑、依赖清单。
 
-## 仓库组织（双平台双框架）
+## 仓库组织（Tauri 双平台）
 
-当前仓库已进入双平台组织的第 1 阶段（骨架与命名统一）：
+当前仓库已进入 Tauri 双平台组织：
 
 | 目录 | 角色 |
 |---|---|
-| `apps/win-tauri/` | Windows + Tauri 应用壳（规划主线） |
-| `apps/mac-electron/` | macOS + Electron 应用壳（规划主线） |
+| `apps/mac-tauri/` | macOS + Tauri 应用壳（当前默认入口） |
+| `apps/win-tauri/` | Windows + Tauri 应用壳 |
+| `apps/mac-electron/` | macOS + Electron legacy 回退壳 |
 | `apps/shared-renderer/` | 双端共享的 React 渲染层 |
+| `packages/tauri-core/` | Win/Mac Tauri 共享 Rust 后端 |
 | `packages/domain/` | 纯业务模型与用例接口 |
 | `packages/ipc-contract/` | 双端共享 IPC 协议与类型 |
 | `packages/platform-adapter/` | 统一运行时 API 适配层 |
@@ -45,11 +47,11 @@
 
 | 层 | 选型 |
 |---|---|
-| 桌面框架 | Tauri v2（Windows 主线） |
+| 桌面框架 | Tauri v2（macOS / Windows 主线） |
 | 渲染层 | React 18 + Vite + Ant Design 5 |
-| 桌面后端 | Rust + Tauri commands + rusqlite + Windows DPAPI + ssh2/ftp |
+| 桌面后端 | Rust + Tauri commands + rusqlite + ssh2/ftp |
 | 同步协议 | Rust `ssh2` / `ftp` |
-| 凭据安全 | Windows DPAPI |
+| 凭据安全 | Windows DPAPI / macOS Keychain |
 | 校验 | Rust `serde` + 渲染端表单校验 |
 
 > Electron 仅保留为 legacy 回退基线，相关目录与脚本已在下方目录结构和开发命令中标明。
@@ -58,20 +60,15 @@
 
 ```
 apps/
-├── win-tauri/        # Windows Tauri 壳（当前主线）
-├── mac-electron/     # macOS Electron 壳（当前主线）
+├── mac-tauri/        # macOS Tauri 壳（当前默认入口）
+├── win-tauri/        # Windows Tauri 壳
+├── mac-electron/     # macOS Electron legacy 壳
 └── shared-renderer/  # 双端共享 React 渲染层（当前主线）
 packages/
+├── tauri-core/       # Win/Mac Tauri 共享 Rust 后端
 ├── domain/           # 共享业务模型与类型
 ├── ipc-contract/     # 共享 IPC 协议定义
 └── platform-adapter/ # 运行时适配层
-
-# 兼容层（过渡期保留）
-src-tauri/            # 旧路径副本，后续计划移除
-src/main/             # 旧路径副本，后续计划移除
-src/preload/          # 旧路径副本，后续计划移除
-src/shared/           # 旧路径副本，后续计划移除
-src/renderer/         # 旧路径副本，后续计划移除
 ```
 
 ## 开发
@@ -81,24 +78,35 @@ src/renderer/         # 旧路径副本，后续计划移除
 | 命令 | 用途 |
 |---|---|
 | `npm install` | 安装前端、Tauri CLI 与 Rust 侧依赖 |
-| `npm run dev` | Tauri 开发启动（需要 Rust 工具链） |
+| `npm run dev` | macOS Tauri 开发启动（需要 Rust 工具链） |
 | `npm run dev:tauri` | 同 `npm run dev` |
-| `npm run dev:win` | Windows 入口（当前映射到 Tauri） |
+| `npm run dev:mac` | macOS Tauri 开发入口 |
+| `npm run dev:win` | Windows Tauri 开发入口 |
 | `npm run legacy:dev` | legacy Electron 回退启动 |
-| `npm run dev:mac` | macOS 入口（当前映射到 Electron legacy） |
+| `npm run legacy:mac` | macOS Electron legacy 回退启动 |
 | `npm run rebuild:dev` | legacy Electron native 依赖重建 |
 | `npm run lint` | 主 + 渲染双 `tsc --noEmit`，提交前必跑 |
-| `npm run build` | Tauri 打包（需要 Rust 工具链） |
-| `npm run build:win` | Windows 构建入口（当前映射到 Tauri） |
-| `npm run build:mac` | macOS 构建入口（当前映射到 Electron legacy） |
+| `npm run build` | macOS Tauri 打包（需要 Rust 工具链） |
+| `npm run build:mac` | macOS Tauri 打包 |
+| `npm run build:win` | Windows Tauri 打包 |
+| `npm run package:mac` | macOS Tauri 打包并归集到 `release/final/` |
+| `npm run package:win` | Windows Tauri 打包并归集到 `release/final/` |
 | `npm run legacy:build` | legacy Electron 编译主进程 + 渲染产物 |
 | `npm test` | Vitest 单元测试 |
+
+### macOS
+
+```bash
+npm install
+npm run dev           # macOS Tauri 开发
+npm run package:mac   # 输出 app/dmg
+```
 
 ### Windows（x64）
 
 ```bash
 npm install           # 需要 Visual Studio Build Tools (C++) + Python 3
-npm run dev           # Tauri 开发
+npm run dev:win       # Tauri 开发
 npm run package:win   # Tauri 打包
 ```
 
@@ -118,9 +126,18 @@ docker compose -f docker/test-servers/docker-compose.yml up -d
 
 ```bash
 npm run build        # Tauri 打包
-npm run package      # Tauri 输出 Windows MSI/NSIS 安装包
-npm run package:win  # 同 npm run package
+npm run package      # 默认 macOS Tauri 打包并归集
+npm run package:mac  # 输出 app/dmg，并复制安装包到 release/final/
+npm run package:win  # 输出 Windows MSI/NSIS，并复制安装包到 release/final/
 ```
+
+最终发布安装包统一放在 `release/final/`，命名格式为：
+
+```text
+<Project>-<Version>-<Framework>-<Platform>-<Arch>-<Kind>.<ext>
+```
+
+同目录会生成 `manifest.json` 与 `manifest.md`，记录项目名、版本、框架、系统、架构、文件大小和 SHA-256。
 
 ## 里程碑
 
@@ -134,9 +151,10 @@ npm run package:win  # 同 npm run package
 | M6 历史与回滚 | ✅ | 历史筛选、文件级清单、反向 diff 一键回滚 |
 | M7 增强 | ✅ | `.deployignore`、部署前后 Hook、并发上传、日志落盘、FTP 端到端验证 |
 | M8 Tauri 迁移 | ✅ | T0-T7 完成：Tauri 成为默认运行时，部署增强与发布脚本已收口 |
+| M9 macOS Tauri | ✅ | macOS Tauri 壳接入共享 Rust core，`dev/build/package:mac` 切换到 Tauri |
 
 ## 安全说明
 
-- 密码与私钥**不会**以明文写入 SQLite，Windows 使用 DPAPI，非 Windows 使用系统钥匙串。
+- 密码与私钥**不会**以明文写入 SQLite，Windows 使用 DPAPI，macOS 使用 Keychain。
 - Tauri command 入参通过 `serde` 结构体反序列化与领域校验处理。
 - 默认推荐 SFTP；选择 FTP 时 UI 会有提示（M2 接入时启用）。

@@ -549,13 +549,13 @@ fn query_server(conn: &Connection, id: i64) -> Result<ServerRecord, String> {
 }
 
 fn save_secret(secret: &str) -> Result<(String, Option<Vec<u8>>), String> {
-    let credential_ref = security::new_dpapi_ref();
-    let cipher = security::protect_secret(secret)?;
+    let credential_ref = security::new_credential_ref();
+    let cipher = security::protect_secret(&credential_ref, secret)?;
     Ok((credential_ref, Some(cipher)))
 }
 
 fn read_secret(conn: &Connection, credential_ref: &str) -> Result<String, String> {
-    if security::is_dpapi_ref(credential_ref) {
+    if security::is_managed_ref(credential_ref) {
         let cipher = conn
             .query_row(
                 "SELECT cipher FROM credential_vault WHERE ref = ?1",
@@ -565,7 +565,7 @@ fn read_secret(conn: &Connection, credential_ref: &str) -> Result<String, String
             .optional()
             .map_err(to_string)?
             .ok_or_else(|| format!("Credential not found: {credential_ref}"))?;
-        return security::unprotect_secret(&cipher);
+        return security::unprotect_secret(credential_ref, &cipher);
     }
 
     Err("该凭据来自旧版系统钥匙串引用，请重新填写密码/私钥并保存".into())
@@ -585,6 +585,7 @@ fn insert_vault_cipher(
 }
 
 fn delete_secret(conn: &Connection, credential_ref: &str) -> Result<(), String> {
+    let _ = security::delete_platform_secret(credential_ref);
     conn.execute(
         "DELETE FROM credential_vault WHERE ref = ?1",
         params![credential_ref],
@@ -624,15 +625,20 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
 
 fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = manifest_dir
-            .parent()
-            .ok_or_else(|| "无法解析仓库根目录".to_string())?;
-        return Ok(repo_root.join(".local-data").join("selfdeploy.sqlite"));
+        return Ok(repo_root()?.join(".local-data").join("selfdeploy.sqlite"));
     }
 
     let data_dir = app.path().app_data_dir().map_err(to_string)?;
     Ok(data_dir.join("selfdeploy.sqlite"))
+}
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(|packages_dir| packages_dir.parent())
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法解析仓库根目录".to_string())
 }
 
 fn migrate(conn: &Connection) -> Result<(), String> {

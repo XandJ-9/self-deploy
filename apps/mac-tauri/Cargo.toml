@@ -1,5 +1,5 @@
 [package]
-name = "self-deploy-win"
+name = "self-deploy-mac"
 version = "1.0.1"
 description = "本地项目快速部署到服务器的桌面工具（SFTP/FTP + Git 增量）"
 authors = ["SelfDeploy"]

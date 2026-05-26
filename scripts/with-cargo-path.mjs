@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,12 +21,26 @@ if (args.length === 0) {
   process.exit(1);
 }
 
+if (args[0] === 'tauri' && args[1] === 'build' && os.platform() === 'darwin') {
+  const hasTarget = args.some((arg) => arg === '--target' || arg.startsWith('--target='));
+  const installedTargets = spawnSync('rustup', ['target', 'list', '--installed'], {
+    encoding: 'utf8',
+  });
+  const canBuildArm64 =
+    installedTargets.status === 0 &&
+    installedTargets.stdout.split(/\r?\n/).includes('aarch64-apple-darwin');
+  if (!hasTarget && os.arch() === 'arm64' && canBuildArm64) {
+    args.push('--target', 'aarch64-apple-darwin');
+  }
+}
+
 const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
 const cargoBin = path.join(os.homedir(), '.cargo', 'bin');
 const cargoExe = path.join(cargoBin, 'cargo.exe');
+const cargoUnix = path.join(cargoBin, 'cargo');
 const currentPath = process.env[pathKey] ?? '';
 
-if (fs.existsSync(cargoExe)) {
+if (fs.existsSync(cargoExe) || fs.existsSync(cargoUnix)) {
   const entries = currentPath.split(path.delimiter).map((entry) => entry.toLowerCase());
   if (!entries.includes(cargoBin.toLowerCase())) {
     process.env[pathKey] = `${cargoBin}${path.delimiter}${currentPath}`;

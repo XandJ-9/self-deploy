@@ -8,6 +8,10 @@
 
 ## 2026-05-26
 
+- feat(mac-tauri): 新增 macOS Tauri 应用壳，默认 dev/build/package 入口切换到 Mac Tauri
+- feat(tauri-core): 抽出 Win/Mac 共享 Rust 后端 core，并为 macOS 接入 Keychain 凭据存取
+- feat(ci): macOS 平台矩阵构建切换为 Tauri 并补充 Rust 工具链
+- feat(release): 新增发布产物归集脚本，统一输出到 release/final 并生成版本/框架/系统/架构清单
 - feat(restructure): 删除旧路径 src-tauri/、src/main/、src/preload/、src/renderer/、src/shared/，完成全量迁移到 apps/ 和 packages/；同步移除 @shared 别名并修正 ftp.spec.ts 导入路径
 - feat(restructure): 完成第一轮物理迁移，shared 实体迁入 packages，renderer 迁入 apps/shared-renderer，Win/Mac 壳迁入 apps 并切换脚本入口
 - feat(ci): 新增 Win/Mac 平台矩阵 CI 骨架（lint/test + Windows Tauri build + macOS Electron build）

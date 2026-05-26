@@ -2,7 +2,7 @@
 
 ## 进程结构
 
-> 当前主线为 Windows Tauri 架构。前端通过统一 `window.api` 兼容层调用 `src-tauri` 暴露的 command 与事件。
+> 当前主线为 macOS / Windows Tauri 架构。前端通过统一 `window.api` 兼容层调用 `apps/*-tauri` 暴露的 command 与事件，后端核心逻辑复用 `packages/tauri-core`。
 
 ```
 ┌───────────────────────────────────────────────┐
@@ -13,10 +13,13 @@
 └──────────────┬───────────────────────────────┘
          │ Tauri invoke / event / plugin
 ┌──────────────▼────────────────────────────────┐
-│  src-tauri (Rust)                             │
+│  apps/mac-tauri / apps/win-tauri (Rust)       │
+│  └─ thin Tauri shell                          │
+│                                                │
+│  packages/tauri-core                          │
 │  ├─ commands::*       (兼容 channel 分发)     │
 │  ├─ db::*             (SQLite + migration)    │
-│  ├─ security::*       (Windows DPAPI)         │
+│  ├─ security::*       (DPAPI / Keychain)      │
 │  ├─ git::*            (Git CLI)               │
 │  ├─ transport::*      (SFTP / FTP)            │
 │  └─ deploy::*         (diff → 上传 → 记录)     │
@@ -28,53 +31,19 @@
 ```
 
 ```
-src/
-├── shared/           # 前端与后端共用的类型、常量与通道定义
-│   ├── types.ts
-│   └── ipc-channels.ts
-└── renderer/         # React UI 与前端运行时代码
-  ├── App.tsx
-  ├── main.tsx
-  ├── pages/
-  └── api/
-src-tauri/            # Windows Tauri v2 后端主线
-└── src/
-  ├── main.rs
-  ├── commands.rs
-  ├── db.rs
-  ├── security.rs
-  ├── git.rs
-  ├── transport.rs
-  └── deploy.rs
-    ├── pages/
-
-T7 后默认开发、构建与打包入口均指向 Tauri；Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置仅通过 `legacy:*` 脚本保留为回退基线。
-│  ├─ db::*             (SQLite + migration)    │
-│  ├─ security::*       (系统钥匙串凭据引用)     │
-│  ├─ git::*            (git CLI / git2)         │
-│  ├─ transport::*      (SFTP / FTP adapter)     │
-│  └─ deploy::*         (diff → 上传 → 记录)     │
-└──────────────┬────────────────────────────────┘
-               │
-        ┌──────▼─────┐   ┌───────────────┐
-        │  SQLite DB │   │ OS Keychain   │
-        └────────────┘   └───────────────┘
+apps/
+├── mac-tauri/          # macOS Tauri 壳
+├── win-tauri/          # Windows Tauri 壳
+├── mac-electron/       # legacy Electron 回退壳
+└── shared-renderer/    # React UI 与前端运行时代码
+packages/
+├── tauri-core/         # 共享 Rust 后端
+├── domain/             # 共享业务模型
+├── ipc-contract/       # 共享 channel 常量
+└── platform-adapter/   # window.api 运行时适配
 ```
 
-### Tauri 迁移期目录
-
-```
-src-tauri/
-├── tauri.conf.json
-├── capabilities/
-│   └── default.json
-├── Cargo.toml
-└── src/
-    ├── main.rs
-    └── commands.rs      # 当前为 channel 兼容占位，后续按领域拆分
-```
-
-T7 后默认开发、构建与打包入口均指向 Tauri；Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置仅通过 `legacy:*` 脚本保留为回退基线，可在后续独立清理。
+默认开发、构建与打包入口在 macOS 上指向 `apps/mac-tauri`；Windows 使用 `dev/build/package:win` 指向 `apps/win-tauri`。Electron 专属配置仅通过 `legacy:*` 脚本保留为回退基线，可在后续独立清理。
 
 ## 数据模型（SQLite）
 
@@ -103,15 +72,15 @@ deployment_files(deployment_id, path, action, size, status)
 
 ## 部署管线（M5–M7）
 
-- `executeDeployment(...)`（`src/main/deploy/deploy-service.ts`）是部署 / 回滚共用入口
+- `executeDeployment(...)`（`packages/tauri-core/src/deploy.rs`）是部署 / 回滚共用入口
 - 过滤层：Tauri 使用 Rust `ignore` crate 合并 `.deployignore` + 项目排除规则，命中文件跳过传输；legacy Electron 使用 npm `ignore`
-- 连接池：`TransportPool`（`src/main/deploy/transport-pool.ts`）按 `UPLOAD_CONCURRENCY=4` 建立独立 transport；上传走 worker-queue 并发；切换 / 清理 / mkdirp 走 `primary()` 串行避免远端目录竞争
-- Hooks：`pre_deploy_cmd` 失败抛错 → 部署失败；`post_deploy_cmd` 失败仅警告；执行用 `child_process.spawn`，POSIX `sh -c` / Windows `cmd.exe /d /s /c`，行缓冲转发到 `onLog`
-- 日志落盘：`openDeployLog(id)` 写入 `app.getPath('userData')/deploy-logs/{id}.log`，路径回写到 `deployments.log_path`，前端通过 `IPC.Deploy.Log` 拉取
+- 并发上传：Rust 部署服务按固定 worker 数建立独立 transport；切换 / 清理 / mkdirp 走主连接串行避免远端目录竞争
+- Hooks：`pre_deploy_cmd` 失败抛错 → 部署失败；`post_deploy_cmd` 失败仅警告；执行用系统 shell，POSIX `sh -c` / Windows `cmd.exe /d /s /c`，输出转发到日志事件
+- 日志落盘：写入应用数据目录或开发态 `.local-data/deploy-logs/{id}.log`，路径回写到 `deployments.log_path`，前端通过 `IPC.Deploy.Log` 拉取
 
 ## IPC 通道
 
-按领域分组，常量定义在 `src/shared/ipc-channels.ts`：
+按领域分组，常量定义在 `packages/ipc-contract/src/ipc-channels.ts`：
 
 - `Server.*`：list / create / update / remove / test
 - `Project.*`：list / create / update / remove
@@ -131,6 +100,6 @@ deployment_files(deployment_id, path, action, size, status)
 
 - **关注点分离**：Service 编排业务、Adapter 屏蔽协议、Repository 屏蔽存储
 - **不可变数据流**：Service 之间传递新对象，不就地修改
-- **策略模式**：`SftpTransport` 和 `FtpTransport` 实现同一 `Transport` 接口（`src/main/transport/types.ts`），由 `createTransport(server, secret)` 工厂分发
+- **策略模式**：`TransportClient` 按 SFTP / FTP 分发，部署编排只依赖统一传输语义
 - **小文件优先**：每个 IPC 模块单独文件，便于维护
-- **运行时校验**：IPC 入参全部经 Zod 校验，杜绝渲染端注入异常数据
+- **运行时校验**：Tauri command 入参经 `serde` 反序列化与领域校验，渲染端保留表单校验

@@ -14,4 +14,4 @@
 | [06-roadmap.md](./06-roadmap.md) | 开发里程碑与状态 |
 | [07-dependencies.md](./07-dependencies.md) | 关键依赖清单及用途 |
 | [08-tauri-migration-plan.md](./08-tauri-migration-plan.md) | Tauri 迁移方案与阶段计划 |
-| [09-repo-organization-dual-framework.md](./09-repo-organization-dual-framework.md) | Win/Mac 双平台双框架仓库组织方案 |
+| [09-repo-organization-dual-framework.md](./09-repo-organization-dual-framework.md) | Win/Mac Tauri 双平台与 Electron legacy 仓库组织方案 |
