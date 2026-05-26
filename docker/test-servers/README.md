@@ -36,4 +36,4 @@ docker ps   # 应看到 selfdeploy-sftp / selfdeploy-ftp
 - **SFTP `All configured authentication methods failed`**：账号/密码错；或选了私钥但容器没挂载公钥。
 - **FTP `ECONNREFUSED`**：21000-21010 被占用，改 `MIN_PORT/MAX_PORT` 区段并同步映射。
 - **FTP 列表为空但连接成功**：默认目录是 `/ftp/demo`，把 `remoteBasePath` 填 `/` 即可。
-- **macOS Docker Desktop 无法访问端口**：检查 `localhost` 是否真指向 `127.0.0.1`，或把 `Host` 字段填成 `127.0.0.1`。
+- **Windows Docker Desktop 无法访问端口**：检查 `localhost` 是否真指向 `127.0.0.1`，或把 `Host` 字段填成 `127.0.0.1`。

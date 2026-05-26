@@ -8,25 +8,36 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n RENDERER,MAIN -c blue,green \"npm:dev:renderer\" \"npm:dev:main\"",
-    "dev:tauri": "tauri dev",
+    "dev": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri dev --config tauri.conf.json",
+    "dev:tauri": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri dev --config tauri.conf.json",
+    "dev:win": "npm run dev:tauri",
     "dev:renderer": "vite",
-    "dev:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && cross-env NODE_ENV=development electron .",
-    "dev:fresh": "npm run rebuild:dev && npm run dev",
-    "build": "npm run build:renderer && npm run build:main",
+    "legacy:dev": "concurrently -k -n RENDERER,MAIN -c blue,green \"npm:dev:renderer\" \"npm:legacy:main\"",
+    "dev:mac": "npm run legacy:dev",
+    "legacy:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && cross-env NODE_ENV=development electron .",
+    "legacy:build": "npm run build:renderer && npm run build:main",
+    "legacy:package": "npm run legacy:build && electron-builder",
+    "legacy:package:win": "npm run legacy:build && electron-builder --win",
+    "dev:main": "npm run legacy:main",
+    "dev:fresh": "npm run rebuild:dev && npm run legacy:dev",
+    "build": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri build --config tauri.conf.json",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:tauri": "tauri build",
-    "package": "npm run build && electron-builder",
-    "package:mac": "npm run build && electron-builder --mac",
-    "package:win": "npm run build && electron-builder --win",
-    "postpackage:mac": "npm run rebuild:dev",
+    "build:tauri": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri build --config tauri.conf.json",
+    "build:win": "npm run build:tauri",
+    "build:mac": "npm run legacy:build",
+    "package": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri build --config tauri.conf.json",
+    "package:win": "node scripts/with-cargo-path.mjs --cwd apps/win-tauri tauri build --config tauri.conf.json",
+    "package:mac": "npm run legacy:package",
     "postpackage:win": "npm run rebuild:dev",
     "rebuild:native": "electron-builder install-app-deps",
     "rebuild:dev": "electron-rebuild -f -o better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
     "lint": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:contract": "vitest run tests/contract/ipc-contract.spec.ts",
+    "test:e2e:win": "vitest run tests/integration/**/*.spec.ts",
+    "test:e2e:mac": "vitest run tests/integration/**/*.spec.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
@@ -66,7 +77,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.selfdeploy.app",
+    "appId": "com.selfdeploy.windows",
     "productName": "SelfDeploy",
     "directories": {
       "output": "release",
@@ -80,18 +91,6 @@
       "**/node_modules/better-sqlite3/**"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ]
-    },
     "win": {
       "target": [
         {
@@ -100,11 +99,6 @@
             "x64"
           ]
         }
-      ]
-    },
-    "linux": {
-      "target": [
-        "AppImage"
       ]
     }
   }

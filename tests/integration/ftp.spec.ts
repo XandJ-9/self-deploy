@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FtpTransport, testFtpConnection } from '../../src/main/transport/ftp-adapter';
+import { FtpTransport, testFtpConnection } from '../../apps/mac-electron/src/main/transport/ftp-adapter';
 
 const cfg = {
   host: '127.0.0.1',
@@ -44,7 +44,7 @@ describe('FtpTransport 冒烟', () => {
 
   it('connect → put → rename → remove → removeDir', async () => {
     if (skip) {
-      console.warn('[skip] FTP 服务不可达，跳过 (docker compose up -d)');
+      console.log('[skip] FTP 服务不可达，跳过手动联调用例');
       return;
     }
     const t = new FtpTransport(cfg);

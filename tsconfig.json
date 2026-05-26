@@ -12,9 +12,11 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"],
-      "@renderer/*": ["src/renderer/*"],
-      "@main/*": ["src/main/*"]
+      "@domain/*": ["packages/domain/src/*"],
+      "@ipc-contract/*": ["packages/ipc-contract/src/*"],
+      "@platform-adapter/*": ["packages/platform-adapter/src/*"],
+      "@renderer/*": ["apps/shared-renderer/src/*"],
+      "@main/*": ["apps/mac-electron/src/main/*"]
     }
   }
 }

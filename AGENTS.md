@@ -1,17 +1,17 @@
 # SelfDeploy — Agent Guide
 
-本地项目快速部署到服务器的桌面工具（Electron + React + SFTP/FTP + Git 增量）。
+本地项目快速部署到服务器的桌面工具（Windows Tauri + React + Rust + SFTP/FTP + Git 增量）。
 
 > **必读**：所有设计决策均沉淀在 [docs/](./docs/README.md)，新功能开工前先看对应章节，不要凭空猜测。
 
 ## 技术栈（固定，勿替换）
 
-- **桌面**：Electron 32（CommonJS 主进程）
+- **桌面**：Tauri v2（Windows 主线）
 - **渲染**：React 18 + Vite 5 + Ant Design 5 + React Router（HashRouter）+ Zustand
-- **主进程**：Node 22 + better-sqlite3 11（WAL）+ simple-git 3
-- **同步协议**：ssh2-sftp-client 11 / basic-ftp 5
-- **凭据加密**：Electron `safeStorage`（OS 钥匙串）
-- **校验**：Zod（所有 IPC 入参必须校验）
+- **后端**：Rust + Tauri commands + rusqlite + Windows DPAPI + ssh2/ftp
+- **同步协议**：ssh2 / ftp
+- **凭据加密**：Windows DPAPI（系统钥匙串）
+- **校验**：serde + 前端表单校验（必要时辅以 Zod）
 - **测试**：Vitest
 
 完整对比与选型理由：[docs/02-tech-stack.md](./docs/02-tech-stack.md)、[docs/07-dependencies.md](./docs/07-dependencies.md)。
@@ -19,11 +19,13 @@
 ## 必跑命令
 
 ```bash
-npm run dev              # 并行启动 Vite + Electron（开发）
+npm run dev              # Tauri 开发启动（需要 Rust 工具链）
 npm run lint             # 主+渲染双 tsc --noEmit，提交前必跑
-npm run build            # build:renderer + build:main
+npm run build            # Tauri 打包
 npm test                 # vitest run
-npm run package          # electron-builder 出包
+npm run dev:win          # Windows 主线入口（Tauri）
+npm run dev:mac          # macOS 主线入口（Electron）
+npm run legacy:dev       # Electron 回退启动
 ```
 
 构建产物路径已固定，**勿改**：
@@ -39,25 +41,26 @@ npm run package          # electron-builder 出包
 | `tsconfig.main.json` | 主进程/预加载/shared，CommonJS | `dist/main/` |
 | `tsconfig.renderer.json` | 渲染层，ESM，`noEmit`（Vite 负责打包） | — |
 
-修改 `src/main/**` 或 `src/preload/**` 后必须重跑 `npm run build:main`，否则 Electron 加载旧代码。
+修改 `apps/win-tauri/**` 后必须重跑 `npm run build`（或相应的 Rust/Tauri 检查命令），否则桌面应用加载旧代码。
 
 ## 职责边界（CRITICAL — 不要越界）
 
 ```
 src/
-├── shared/          # ⚠️ 纯类型与常量。禁止 import 任何 node/electron/react 模块
-├── preload/         # 仅暴露 window.api，通过 contextBridge。不写业务逻辑
-├── main/            # 所有 Node 能力（文件、网络、Git、DB、密钥）只允许在这里
-│   ├── db/          # better-sqlite3，schema 改动走迁移
-│   ├── security/    # credential-vault：safeStorage 加密；其他模块禁止直接读密码│   ├── transport/    # SFTP / FTP 适配器（sftp-adapter / ftp-adapter / index 按协议分发）│   └── ipc/         # 每个领域一个 *-handlers.ts，入口在 main/index.ts 注册
-└── renderer/        # 纯 UI。禁止 require('fs'/'electron'/...)，必须经 window.api
-    ├── pages/       # 路由级页面，对应一个 IPC 领域
-    ├── components/  # 共享组件（如 PageHero）
-    └── styles/      # global.css（深色玻璃拟态主题，勿替换主色）
+├── shared/          # 纯类型与常量。禁止 import 任何 node/electron/react 模块
+└── renderer/        # 纯 UI + 前端运行时代码。禁止 require('fs'/'electron'/...)，必须经 window.api
+  ├── pages/       # 路由级页面，对应一个业务领域
+  ├── api/         # runtime 兼容层
+  ├── components/  # 共享组件（如 PageHero）
+  └── styles/      # global.css（深色玻璃拟态主题，勿替换主色）
+apps/win-tauri/      # Windows Tauri 主线后端。所有文件、网络、Git、DB、密钥能力只允许在这里
+apps/mac-electron/   # macOS Electron 主线后端壳
+apps/shared-renderer/# 双端共享渲染层
+packages/            # domain / ipc-contract / platform-adapter / testkit
 ```
 
 **铁律**：
-1. 渲染进程 ↔ 主进程**只通过** `window.api.invoke(channel, ...args)`。Channel 常量在 `src/shared/ipc-channels.ts`，新增 channel 必须先加到那里。
+1. 渲染进程 ↔ 后端**只通过** `window.api.invoke(channel, ...args)`。Channel 常量在 `src/shared/ipc-channels.ts`，新增 channel 必须先加到那里。
 2. 凭据明文**禁止**写入 `servers` 表或日志。新增涉密字段 → 用 `credential-vault` 存 ref，表里只存 ref。
 3. IPC handler 入参**必须** Zod 校验后再用，参考 `server-handlers.ts` 写法。
 4. 共用类型放 `src/shared/types.ts`，主/渲染都从此处 import；不要在两边重复定义。
@@ -80,10 +83,10 @@ src/
 
 | 领域 | IPC handlers | UI 页面 | 文档 |
 |---|---|---|---|
-| 服务器管理 | `src/main/ipc/server-handlers.ts` + `src/main/transport/` | `src/renderer/pages/ServersPage.tsx` | [04-core-flows §服务器](./docs/04-core-flows.md) |
-| 项目管理 | `project-handlers.ts` | `ProjectsPage.tsx` | 同上 |
-| Git 差异 | `git-handlers.ts` | `DeployPage.tsx` | [04-core-flows §变更识别](./docs/04-core-flows.md) |
-| 部署执行（M5） | `deploy-handlers.ts`（占位） | `DeployPage.tsx` | [04-core-flows §部署](./docs/04-core-flows.md) |
+| 服务器管理 | `apps/win-tauri/src/db.rs` + `apps/win-tauri/src/transport.rs` | `apps/shared-renderer/src/pages/ServersPage.tsx` | [04-core-flows §服务器](./docs/04-core-flows.md) |
+| 项目管理 | `apps/win-tauri/src/db.rs` | `apps/shared-renderer/src/pages/ProjectsPage.tsx` | 同上 |
+| Git 差异 | `apps/win-tauri/src/git.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §变更识别](./docs/04-core-flows.md) |
+| 部署执行（M5） | `apps/win-tauri/src/deploy.rs` | `apps/shared-renderer/src/pages/DeployPage.tsx` | [04-core-flows §部署](./docs/04-core-flows.md) |
 | 历史/回滚（M6） | 待建 | `HistoryPage.tsx` | [06-roadmap.md](./docs/06-roadmap.md) |
 
 当前进度与下一步：[docs/06-roadmap.md](./docs/06-roadmap.md)。
@@ -105,10 +108,10 @@ src/
 
 ## 常见坑
 
-- 改完主进程忘记 `build:main` → Electron 仍跑旧 JS。`npm run dev` 已含编译，但只在启动时跑一次，热改需手动重启或加 watcher。
-- `preload` 暴露的方法签名是**变参** `invoke<T>(channel, ...args)`，不要回退成单参数。
-- SQLite 路径在 `app.getPath('userData')`，开发期清库：删除该目录下 `selfdeploy.sqlite*` 三个文件。
-- `better-sqlite3` 是 native 模块，Node 版本变化后需 `npm rebuild` 或 `electron-rebuild`。
+- 修改 `apps/win-tauri/**` 后忘记重跑 `npm run build`，会导致桌面应用加载旧 Rust 后端。
+- `window.api` 暴露的方法签名是**变参** `invoke<T>(channel, ...args)`，不要回退成单参数。
+- SQLite 路径在应用数据目录下，开发期清库时删除对应的 `selfdeploy.sqlite*` 文件。
+- `legacy:*` 只做回退参考，不要把新功能继续加到旧路径 `src/main/**` 或 `src/preload/**`。
 - Vite `base: './'` 必须保留，否则打包后 `file://` 加载资源 404。
 
 ## 本地联调远端服务器

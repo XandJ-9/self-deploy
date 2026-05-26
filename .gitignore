@@ -1,8 +1,15 @@
 node_modules/
 dist/
 release/
+
+# Tauri / Rust 构建产物
+apps/win-tauri/target/
+apps/win-tauri/gen/schemas/
+
+# 旧路径（迁移前残留，保留以防意外恢复）
 src-tauri/target/
 src-tauri/gen/
+
 *.log
 .DS_Store
 .env

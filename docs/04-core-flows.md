@@ -34,7 +34,7 @@ const changes = from
 
 ## 2. 部署执行（M5 实现）
 
-DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口编排，不感知 SFTP / FTP 差异。
+DeployService（Tauri：`src-tauri/src/deploy.rs`）面向 Transport 接口编排，不感知 SFTP / FTP 差异。
 
 ```
 1. 校验
@@ -75,6 +75,8 @@ DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口�
 > **过滤**：`executeDeployment` 入口处加载 `.deployignore` + 项目 `excludePatterns`，命中文件直接以 `status='skipped'` 写入 `deployment_files` 并跳过传输；过滤逻辑同样作用于回滚（共用同一入口）。
 >
 > **Hooks**：上传开始前执行 `pre_deploy_cmd`（失败 → 部署失败）；`removeDir(tmpRoot)` 后执行 `post_deploy_cmd`（失败 → 仅警告）。命令在项目本地路径下用 `child_process.spawn` 执行，POSIX 走 `sh -c`、Windows 走 `cmd.exe /d /s /c`，stdout/stderr 行缓冲转发到日志流。
+>
+> **Tauri 迁移状态**：Rust 版已覆盖 Git/Folder 变更计算、SFTP/FTP 上传、临时目录切换、`deployments` / `deployment_files` 写入、`deploy:onLog` 实时事件、历史详情、日志读取、Git 模式回滚、`.deployignore` 完整语义、Hook 与并发上传。
 
 ## 3. 回滚流程
 
@@ -93,7 +95,7 @@ DeployService（`src/main/deploy/deploy-service.ts`）面向 `Transport` 接口�
 - DeployService 接受一个 `(evt: DeployLogEvent) => void` 回调，该回调由 `deploy-handlers.ts` 包装为广播：遍历 `webContents.getAllWebContents()` 发送 `IPC.Deploy.OnLog`
 - 事件结构：`{ deploymentId, level: 'info'|'warn'|'error', message, progress?: 0..1, timestamp }`
 - 渲染端通过 preload 暴露的白名单订阅 API `window.api.on(channel, listener)` 接收；仅允许 `IPC.Deploy.OnLog`
-- 当前实时流通过 `webContents.send` 广播；同时 `openDeployLog(id)` 把所有事件追加到 `app.getPath('userData')/deploy-logs/{id}.log`，路径写入 `deployments.log_path`，前端通过 `IPC.Deploy.Log` 拉取完整文本（历史页详情面板「查看完整日志」按钮）
+- Tauri 版通过 `app.emit('deploy:onLog', evt)` 推送。日志同时追加到 `deploy-logs/{id}.log`，路径写入 `deployments.log_path`；前端通过 `IPC.Deploy.Log` 拉取完整文本。
 
 ## 5. 状态机
 

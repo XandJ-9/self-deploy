@@ -5,9 +5,9 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "dist/main",
-    "rootDir": "src",
+    "rootDir": "apps/mac-electron/src",
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["apps/mac-electron/src/**/*"]
 }

@@ -2,67 +2,53 @@
 
 ## 进程结构
 
-> 当前稳定版为 Electron 架构；Tauri 迁移见下方「Tauri 目标架构」。迁移期前端会通过统一 `window.api` 兼容层同时支持 Electron preload 与 Tauri runtime。
+> 当前主线为 Windows Tauri 架构。前端通过统一 `window.api` 兼容层调用 `src-tauri` 暴露的 command 与事件。
 
 ```
 ┌───────────────────────────────────────────────┐
-│  Renderer (React + AntD)                      │
-│  ├─ 服务器管理页 / 项目管理页                  │
-│  ├─ 部署向导（选项目→选 commit→预览→执行）    │
-│  └─ 部署历史 / 实时日志                        │
-└──────────────┬────────────────────────────────┘
-               │ IPC (ipcRenderer.invoke / on)
-               │ 通过 preload contextBridge 暴露
+│  Renderer (React + AntD + Vite)              │
+│  ├─ 服务器管理页 / 项目管理页                 │
+│  ├─ 部署向导（选项目→选 commit→预览→执行）   │
+│  └─ 部署历史 / 实时日志                       │
+└──────────────┬───────────────────────────────┘
+         │ Tauri invoke / event / plugin
 ┌──────────────▼────────────────────────────────┐
-│  Main Process (Node)                          │
-│  ├─ ServerService    (CRUD + 连接测试)        │
-│  ├─ ProjectService   (CRUD)                   │
-│  ├─ GitService       (simple-git)             │
-│  ├─ DeployService    (编排：diff → 上传 → 记录)│
-│  ├─ SftpAdapter / FtpAdapter (策略模式)       │
-│  └─ CredentialVault  (safeStorage 加解密)     │
+│  src-tauri (Rust)                             │
+│  ├─ commands::*       (兼容 channel 分发)     │
+│  ├─ db::*             (SQLite + migration)    │
+│  ├─ security::*       (Windows DPAPI)         │
+│  ├─ git::*            (Git CLI)               │
+│  ├─ transport::*      (SFTP / FTP)            │
+│  └─ deploy::*         (diff → 上传 → 记录)     │
 └──────────────┬────────────────────────────────┘
-               │
-        ┌──────▼─────┐   ┌───────────────┐
-        │  SQLite DB │   │ OS Keychain   │
-        └────────────┘   └───────────────┘
+         │
+  ┌──────▼─────┐   ┌───────────────┐
+  │  SQLite DB │   │ OS Keychain   │
+  └────────────┘   └───────────────┘
 ```
-
-## 目录结构
 
 ```
 src/
-├── shared/           # 主/渲染共用的类型与常量
+├── shared/           # 前端与后端共用的类型、常量与通道定义
 │   ├── types.ts
 │   └── ipc-channels.ts
-├── preload/          # contextBridge 暴露安全 API
-│   └── index.ts
-├── main/             # Electron 主进程
-│   ├── index.ts
-│   ├── db/           # SQLite 初始化与迁移
-│   ├── security/     # 凭据保险柜
-│   ├── ipc/          # 各模块 IPC handlers
-│   ├── transport/    # SFTP / FTP 适配器实现 Transport 接口（types/sftp-adapter/ftp-adapter/index）
-│   └── deploy/       # DeployService：diff→上传→原子切换→清理
-└── renderer/         # React UI
-    ├── App.tsx
-    ├── main.tsx
+└── renderer/         # React UI 与前端运行时代码
+  ├── App.tsx
+  ├── main.tsx
+  ├── pages/
+  └── api/
+src-tauri/            # Windows Tauri v2 后端主线
+└── src/
+  ├── main.rs
+  ├── commands.rs
+  ├── db.rs
+  ├── security.rs
+  ├── git.rs
+  ├── transport.rs
+  └── deploy.rs
     ├── pages/
-    └── types/
-```
 
-## Tauri 目标架构
-
-```
-┌───────────────────────────────────────────────┐
-│  Renderer (React + AntD + Vite)               │
-│  ├─ 复用现有页面与 Zustand 状态                │
-│  └─ runtime-api.ts 统一封装 invoke/listen      │
-└──────────────┬────────────────────────────────┘
-               │ Tauri invoke / event / plugin
-┌──────────────▼────────────────────────────────┐
-│  src-tauri (Rust)                             │
-│  ├─ commands::*       (强类型 command)        │
+T7 后默认开发、构建与打包入口均指向 Tauri；Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置仅通过 `legacy:*` 脚本保留为回退基线。
 │  ├─ db::*             (SQLite + migration)    │
 │  ├─ security::*       (系统钥匙串凭据引用)     │
 │  ├─ git::*            (git CLI / git2)         │
@@ -88,7 +74,7 @@ src-tauri/
     └── commands.rs      # 当前为 channel 兼容占位，后续按领域拆分
 ```
 
-迁移完成后，Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置可以删除；迁移期保留它们作为可运行基线。
+T7 后默认开发、构建与打包入口均指向 Tauri；Electron 专属的 `src/main` / `src/preload` / `tsconfig.main.json` / `electron-builder` 配置仅通过 `legacy:*` 脚本保留为回退基线，可在后续独立清理。
 
 ## 数据模型（SQLite）
 
@@ -118,7 +104,7 @@ deployment_files(deployment_id, path, action, size, status)
 ## 部署管线（M5–M7）
 
 - `executeDeployment(...)`（`src/main/deploy/deploy-service.ts`）是部署 / 回滚共用入口
-- 过滤层：`loadIgnoreFilter(localPath, excludePatterns)` 合并 `.deployignore` + 项目排除规则（`ignore` npm 包），命中文件写入 `deployment_files` 并 `status='skipped'`
+- 过滤层：Tauri 使用 Rust `ignore` crate 合并 `.deployignore` + 项目排除规则，命中文件跳过传输；legacy Electron 使用 npm `ignore`
 - 连接池：`TransportPool`（`src/main/deploy/transport-pool.ts`）按 `UPLOAD_CONCURRENCY=4` 建立独立 transport；上传走 worker-queue 并发；切换 / 清理 / mkdirp 走 `primary()` 串行避免远端目录竞争
 - Hooks：`pre_deploy_cmd` 失败抛错 → 部署失败；`post_deploy_cmd` 失败仅警告；执行用 `child_process.spawn`，POSIX `sh -c` / Windows `cmd.exe /d /s /c`，行缓冲转发到 `onLog`
 - 日志落盘：`openDeployLog(id)` 写入 `app.getPath('userData')/deploy-logs/{id}.log`，路径回写到 `deployments.log_path`，前端通过 `IPC.Deploy.Log` 拉取
@@ -138,7 +124,7 @@ deployment_files(deployment_id, path, action, size, status)
 
 - 迁移期：前端调用 `window.api.invoke(channel, ...args)`，Tauri runtime 下转发为 `invoke_channel({ channel, args })`
 - 稳定后：每个领域拆成强类型 command，例如 `server_list` / `project_create` / `deploy_run`
-- 事件：部署日志沿用 `deploy:onLog` 名称，Tauri 后端通过 event emit 推送
+- 事件：部署日志沿用 `deploy:onLog` 名称，Tauri 后端已在 `deploy:run` 中通过 event emit 推送
 - 入参校验：Rust command 使用 `serde` 结构体反序列化 + 领域校验替代 Electron 版 Zod；渲染端表单校验继续保留
 
 ## 设计原则

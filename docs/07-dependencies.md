@@ -1,12 +1,12 @@
 # 07 · 依赖清单
 
-## 运行时依赖
+## 当前主线依赖
 
 | 包 | 版本 | 用途 |
 |---|---|---|
-| `electron` | ^32 | 桌面运行时 |
-| `@tauri-apps/api` | ^2 | Tauri 前端 API（迁移期） |
-| `@tauri-apps/plugin-dialog` | ^2 | Tauri 目录选择插件（迁移期） |
+| `@tauri-apps/api` | ^2 | Tauri 前端 API |
+| `@tauri-apps/plugin-dialog` | ^2 | Tauri 目录选择插件 |
+| `electron` | ^32 | legacy Electron 回退运行时 |
 | `react` / `react-dom` | ^18 | UI 渲染 |
 | `react-router-dom` | ^6 | 渲染端路由 |
 | `antd` | ^5 | UI 组件库 |
@@ -14,7 +14,7 @@
 | `simple-git` | ^3 | Git 命令封装 |
 | `ssh2-sftp-client` | ^11 | SFTP 客户端 |
 | `basic-ftp` | ^5 | FTP 客户端（Promise） |
-| `ignore` | ^7 | gitignore 语义的路径匹配，驱动 `.deployignore` 与 `excludePatterns` |
+| `ignore` | ^7 | legacy Electron 部署过滤（回退基线） |
 | `better-sqlite3` | ^11 | 本地 SQLite（同步 API） |
 | `zod` | ^3 | IPC/表单运行时校验 |
 | `@trpc/server` / `@trpc/client` | ^11 | 预留，未来 IPC 类型安全 |
@@ -26,13 +26,13 @@
 |---|---|
 | `typescript` | TS 编译 |
 | `vite` + `@vitejs/plugin-react` | 渲染端开发服务器与构建 |
-| `electron-builder` | 打包 dmg/exe/AppImage |
 | `@tauri-apps/cli` | Tauri 开发与打包命令 |
+| `electron-builder` | legacy Electron 打包（回退基线） |
 | `concurrently` + `wait-on` + `cross-env` | dev 脚本编排 |
 | `vitest` | 单元测试 |
 | `@types/*` | 类型声明 |
 
-## Rust 依赖（Tauri 迁移）
+## Rust 依赖（Tauri 主线）
 
 | crate | 用途 |
 |---|---|
@@ -40,15 +40,21 @@
 | `tauri-plugin-dialog` | 原生目录选择 |
 | `serde` / `serde_json` | command 入参和返回值序列化 |
 | `rusqlite` (`bundled`) | Tauri 后端 SQLite 初始化、迁移与 CRUD |
+| `uuid` | 生成不含明文的 `credential_ref` |
+| `ssh2` | Tauri 后端 SFTP 协议级连接测试 |
+| `ftp` | Tauri 后端 FTP 协议级连接测试 |
+| `ignore` | Rust 版 `.deployignore` / `excludePatterns` gitignore 语义匹配 |
+| `winapi` | Windows DPAPI 凭据加密与解密 |
 
 ## 关键脚本
 
 ```bash
-npm run dev           # Vite + Electron 并行启动（HMR）
-npm run dev:tauri     # Tauri v2 开发启动（需要 Rust 工具链）
-npm run build         # 编译主进程 + 渲染产物到 dist/
-npm run build:tauri   # Tauri 打包（需要 Rust 工具链）
-npm run package       # electron-builder 输出到 release/
+npm run dev           # Tauri v2 开发启动（需要 Rust 工具链）
+npm run dev:tauri     # 同 npm run dev
+npm run build         # Tauri Windows 打包
+npm run package       # 同 npm run build，输出 MSI/NSIS
+npm run legacy:dev    # legacy Electron 开发启动
+npm run legacy:build  # legacy Electron 构建
 npm run lint          # 双 tsc --noEmit
 npm test              # vitest
 ```

@@ -6,10 +6,7 @@
 
 - 数据库 `servers` 表只存 `credential_ref`（UUID），**不存** 任何密码/私钥明文
 - 实际密文存放于 `credential_vault` 表（`ref TEXT PRIMARY KEY, cipher BLOB`）
-- 加解密通过 Electron `safeStorage` 调用操作系统能力：
-  - **macOS** → Keychain
-  - **Windows** → DPAPI
-  - **Linux** → libsecret / kwallet
+- legacy Electron 基线通过 `safeStorage` 调用 Windows DPAPI；Tauri 主线直接调用 Windows DPAPI
 - 启动时校验 `safeStorage.isEncryptionAvailable()`，否则拒绝写入
 
 ### API
@@ -26,9 +23,12 @@ deleteCredential(ref): void
 ### Tauri 迁移目标
 
 - 数据库仍只保存 `credential_ref`，不保存密码/私钥明文
-- Rust 后端优先使用系统钥匙串等价能力（计划评估 `keyring` crate）；如需跨平台加密文件库，再评估 Tauri Stronghold 插件
+- Rust 后端直接使用 Windows DPAPI 加密密文并写入 `credential_vault` 表
+- `credential_vault` 表内只保存 DPAPI 密文，不保存密码/私钥明文；`credential_ref` 使用 `dpapi:` 前缀区分新凭据与旧版钥匙串引用
 - 前端只能通过 Tauri command 提交或刷新凭据，不能读取明文
 - Tauri capabilities 默认只开放必要能力；文件选择使用 dialog 插件，任意文件系统读写只允许 Rust 后端内部执行
+
+Tauri SFTP 连接测试读取私钥内容后，仅为 `ssh2` 认证短暂写入系统临时目录，认证完成后立即删除；私钥仍不写入 SQLite、业务日志或前端状态。
 
 ## OWASP Top 10 对齐
 
@@ -39,7 +39,7 @@ deleteCredential(ref): void
 | A03 注入 | IPC 入参全部 Zod 校验；SQL 使用 better-sqlite3 参数化 |
 | A05 安全配置错误 | `contextIsolation: true` / `nodeIntegration: false` / `sandbox` 渲染端 |
 | A07 身份认证失败 | 私钥优于密码；记录已知主机指纹（M2 实施） |
-| A08 软件与数据完整性 | electron-builder 出包签名（macOS 公证、Win 代码签名）— 发布阶段 |
+| A08 软件与数据完整性 | Windows 安装包代码签名 — 发布阶段 |
 
 ## Electron 安全配置
 
