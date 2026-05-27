@@ -30,6 +30,8 @@
     "package": "npm run package:mac",
     "package:win": "npm run build:win && npm run collect:release -- --platform windows --framework tauri",
     "package:mac": "npm run build:mac && npm run collect:release -- --platform macos --framework tauri",
+    "package:legacy:mac": "npm run legacy:package && npm run collect:release -- --platform macos --framework electron --source-root release",
+    "package:legacy:win": "npm run legacy:package:win && npm run collect:release -- --platform windows --framework electron --source-root release",
     "collect:release": "node scripts/collect-release-artifacts.mjs",
     "postpackage:win": "npm run rebuild:dev",
     "rebuild:native": "electron-builder install-app-deps",

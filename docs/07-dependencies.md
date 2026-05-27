@@ -47,21 +47,7 @@
 | `winapi` | Windows DPAPI 凭据加密与解密 |
 | macOS `security` CLI | macOS Keychain 凭据保存、读取与删除 |
 
-## 关键脚本
-
-```bash
-npm run dev           # macOS Tauri v2 开发启动（需要 Rust 工具链）
-npm run dev:tauri     # 同 npm run dev
-npm run dev:win       # Windows Tauri 开发启动
-npm run build         # macOS Tauri 打包
-npm run build:win     # Windows Tauri 打包
-npm run package       # 同 package:mac，输出 app/dmg
-npm run collect:release # 归集 Tauri 产物到 release/final 并生成 manifest
-npm run legacy:dev    # legacy Electron 开发启动
-npm run legacy:build  # legacy Electron 构建
-npm run lint          # 双 tsc --noEmit
-npm test              # vitest
-```
+常用开发、构建、打包与图标生成命令统一维护在根目录 [README.md](../README.md) 的「开发命令」章节。
 
 ## 选型理由速查
 

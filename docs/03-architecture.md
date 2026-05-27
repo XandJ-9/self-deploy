@@ -43,7 +43,7 @@ packages/
 └── platform-adapter/   # window.api 运行时适配
 ```
 
-默认开发、构建与打包入口在 macOS 上指向 `apps/mac-tauri`；Windows 使用 `dev/build/package:win` 指向 `apps/win-tauri`。Electron 专属配置仅通过 `legacy:*` 脚本保留为回退基线，可在后续独立清理。
+默认开发、构建与打包入口在 macOS 上指向 `apps/mac-tauri`；Windows 使用 `dev/build/package:win` 指向 `apps/win-tauri`。Electron 专属配置仅通过 `legacy:*` 脚本保留为回退基线，可在后续独立清理。发布产物统一归集到 `release/final/<version>/<framework>/<platform>/<arch>/`，并在根目录与版本目录生成 manifest 以管理多平台、多框架版本。
 
 ## 数据模型（SQLite）
 

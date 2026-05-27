@@ -64,7 +64,7 @@ docs/
 - 增加 contract test，保证双端协议兼容
 - 增加平台 E2E：`test:e2e:win` / `test:e2e:mac`
 - CI 按平台矩阵构建与发布
-- 发布产物统一归集到 `release/final/`，文件名和 manifest 标明项目名、版本、框架、系统与架构
+- 发布产物统一归集到 `release/final/<version>/<framework>/<platform>/<arch>/`，根目录与版本目录同时生成 manifest，统一管理 win-tauri、mac-tauri、mac-electron 等发行包
 
 ### 阶段 6（已完成）：macOS Tauri 主线
 

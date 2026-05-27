@@ -6,6 +6,11 @@
 > - `feat(模块): 描述`
 > - `bugfix(模块): 描述`
 
+## 2026-05-27
+
+- feat(tauri): 使用 deploy-app-icon.png 重生成 Win/Mac Tauri 应用图标资源并更新安装包图标
+- feat(release): 发布归集改为按版本/框架/平台/架构分层管理，并补充 macOS/Windows Electron legacy 归集脚本与双层 manifest
+
 ## 2026-05-26
 
 - feat(mac-tauri): 新增 macOS Tauri 应用壳，默认 dev/build/package 入口切换到 Mac Tauri

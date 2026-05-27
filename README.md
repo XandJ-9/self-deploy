@@ -89,8 +89,11 @@ packages/
 | `npm run build` | macOS Tauri 打包（需要 Rust 工具链） |
 | `npm run build:mac` | macOS Tauri 打包 |
 | `npm run build:win` | Windows Tauri 打包 |
-| `npm run package:mac` | macOS Tauri 打包并归集到 `release/final/` |
-| `npm run package:win` | Windows Tauri 打包并归集到 `release/final/` |
+| `npx tauri icon icon/deploy-app-icon-transparent-corners.png --output apps/mac-tauri/icons` | 由源图生成 Tauri 图标；Windows 输出目录改为 `apps/win-tauri/icons`，`deploy-app-icon-transparent-corners.png`为保存在icon目录下的图片 |
+| `npm run package:mac` | macOS Tauri 打包并归集到 `release/final/<version>/tauri/macos/<arch>/` |
+| `npm run package:win` | Windows Tauri 打包并归集到 `release/final/<version>/tauri/windows/<arch>/` |
+| `npm run package:legacy:mac` | macOS Electron legacy 打包并归集到 `release/final/<version>/electron/macos/<arch>/` |
+| `npm run package:legacy:win` | Windows Electron legacy 打包并归集到 `release/final/<version>/electron/windows/<arch>/` |
 | `npm run legacy:build` | legacy Electron 编译主进程 + 渲染产物 |
 | `npm test` | Vitest 单元测试 |
 
@@ -127,17 +130,34 @@ docker compose -f docker/test-servers/docker-compose.yml up -d
 ```bash
 npm run build        # Tauri 打包
 npm run package      # 默认 macOS Tauri 打包并归集
-npm run package:mac  # 输出 app/dmg，并复制安装包到 release/final/
-npm run package:win  # 输出 Windows MSI/NSIS，并复制安装包到 release/final/
+npm run package:mac  # 输出 app/dmg，并复制到 release/final/<version>/tauri/macos/<arch>/
+npm run package:win  # 输出 Windows MSI/NSIS，并复制到 release/final/<version>/tauri/windows/<arch>/
+npm run package:legacy:mac # 输出 Electron legacy macOS 安装包，并归集到 release/final/<version>/electron/macos/<arch>/
+npm run package:legacy:win # 输出 Electron legacy Windows 安装包，并归集到 release/final/<version>/electron/windows/<arch>/
 ```
 
-最终发布安装包统一放在 `release/final/`，命名格式为：
+最终发布安装包统一放在 `release/final/`，目录结构固定为：
+
+```text
+release/final/
+  manifest.json
+  manifest.md
+  <Version>/
+    manifest.json
+    manifest.md
+    <Framework>/
+      <Platform>/
+        <Arch>/
+          <Project>-<Version>-<Framework>-<Platform>-<Arch>-<Kind>.<ext>
+```
+
+单个发行包文件命名格式为：
 
 ```text
 <Project>-<Version>-<Framework>-<Platform>-<Arch>-<Kind>.<ext>
 ```
 
-同目录会生成 `manifest.json` 与 `manifest.md`，记录项目名、版本、框架、系统、架构、文件大小和 SHA-256。
+根目录 `manifest.json` / `manifest.md` 用于聚合全部版本、平台与框架；每个版本目录下也会单独生成一份 manifest，便于按版本管理 win-tauri、mac-tauri、mac-electron 等发行包。
 
 ## 里程碑
 

@@ -13,30 +13,50 @@ const version = args.version ?? pkg.version;
 const framework = args.framework ?? 'tauri';
 const platform = args.platform ?? currentPlatform();
 const arch = normalizeArch(args.arch ?? os.arch());
-const sourceRoot = path.join(repoRoot, 'apps', appDir(platform), 'target', 'release', 'bundle');
 const outputRoot = path.join(repoRoot, 'release', 'final');
+const existingEntries = migrateLegacyEntries(readExistingEntries(outputRoot), outputRoot);
+const sourceRoot = resolveSourceRoot({
+  repoRoot,
+  framework,
+  platform,
+  sourceRoot: args['source-root'] ?? args.sourceRoot,
+});
+const versionRoot = path.join(outputRoot, sanitize(version));
+const artifactOutputRoot = path.join(versionRoot, framework, platform, arch);
 
-const artifacts = collectArtifacts(sourceRoot);
+const artifacts = collectArtifacts(sourceRoot, {
+  excludedRoots: [outputRoot],
+});
 if (artifacts.length === 0) {
   console.error(`No release artifacts found in ${sourceRoot}`);
   process.exit(1);
 }
 
-fs.mkdirSync(outputRoot, { recursive: true });
+fs.mkdirSync(artifactOutputRoot, { recursive: true });
+
+const generatedAt = new Date().toISOString();
 
 const nextEntries = artifacts.map((artifact) => {
-  const ext = artifact.ext;
-  const fileName = [
-    sanitize(projectName),
+  const fileName = buildArtifactFileName({
+    projectName,
     version,
     framework,
     platform,
     arch,
-    artifact.kind,
-  ].join('-') + ext;
-  const target = path.join(outputRoot, fileName);
+    kind: artifact.kind,
+    ext: artifact.ext,
+  });
+  const target = buildArtifactTargetPath({
+    outputRoot,
+    version,
+    framework,
+    platform,
+    arch,
+    fileName,
+  });
   fs.copyFileSync(artifact.path, target);
   return {
+    collectedAt: generatedAt,
     projectName,
     version,
     framework,
@@ -50,20 +70,19 @@ const nextEntries = artifacts.map((artifact) => {
   };
 });
 
-const generatedAt = new Date().toISOString();
-const entriesByFile = new Map(
-  readExistingEntries(outputRoot)
+const entriesByPath = new Map(
+  existingEntries
     .filter((entry) => fs.existsSync(path.join(repoRoot, entry.path)))
-    .map((entry) => [entry.fileName, entry]),
+    .map((entry) => [entry.path, entry]),
 );
 for (const entry of nextEntries) {
-  entriesByFile.set(entry.fileName, entry);
+  entriesByPath.set(entry.path, entry);
 }
-const entries = [...entriesByFile.values()].sort((left, right) =>
-  left.fileName.localeCompare(right.fileName),
-);
+const entries = [...entriesByPath.values()].sort(compareEntries);
 const manifest = {
   generatedAt,
+  layout: 'release/final/<version>/<framework>/<platform>/<arch>/<file>',
+  versions: summarizeVersions(entries),
   artifacts: entries,
 };
 
@@ -71,7 +90,25 @@ fs.writeFileSync(
   path.join(outputRoot, 'manifest.json'),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
-fs.writeFileSync(path.join(outputRoot, 'manifest.md'), renderMarkdown(manifest));
+fs.writeFileSync(path.join(outputRoot, 'manifest.md'), renderRootMarkdown(manifest));
+
+for (const [versionName, versionEntries] of groupBy(entries, (entry) => entry.version)) {
+  const versionManifest = {
+    generatedAt,
+    version: versionName,
+    artifacts: versionEntries.sort(compareEntries),
+  };
+  const currentVersionRoot = path.join(outputRoot, sanitize(versionName));
+  fs.mkdirSync(currentVersionRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(currentVersionRoot, 'manifest.json'),
+    `${JSON.stringify(versionManifest, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(currentVersionRoot, 'manifest.md'),
+    renderVersionMarkdown(versionManifest),
+  );
+}
 
 console.log(`Collected ${entries.length} artifact(s) into ${path.relative(repoRoot, outputRoot)}`);
 for (const entry of entries) {
@@ -89,6 +126,37 @@ function readExistingEntries(root) {
   } catch {
     return [];
   }
+}
+
+function migrateLegacyEntries(entries, root) {
+  return entries.map((entry) => {
+    if (!entry?.path) {
+      return entry;
+    }
+    const absolutePath = path.join(repoRoot, entry.path);
+    if (!fs.existsSync(absolutePath) || isStructuredReleasePath(entry.path)) {
+      return entry;
+    }
+    const migratedTarget = buildArtifactTargetPath({
+      outputRoot: root,
+      version: entry.version,
+      framework: entry.framework,
+      platform: entry.platform,
+      arch: entry.arch,
+      fileName: entry.fileName,
+    });
+    fs.mkdirSync(path.dirname(migratedTarget), { recursive: true });
+    if (path.resolve(absolutePath) !== path.resolve(migratedTarget)) {
+      fs.copyFileSync(absolutePath, migratedTarget);
+      fs.rmSync(absolutePath, { force: true });
+    }
+    return {
+      ...entry,
+      path: path.relative(repoRoot, migratedTarget),
+      sizeBytes: fs.statSync(migratedTarget).size,
+      sha256: sha256(migratedTarget),
+    };
+  });
 }
 
 function parseArgs(rawArgs) {
@@ -120,6 +188,18 @@ function currentPlatform() {
   return process.platform;
 }
 
+function resolveSourceRoot({ repoRoot: root, framework: runtime, platform: targetPlatform, sourceRoot: explicitSourceRoot }) {
+  if (explicitSourceRoot) {
+    return path.isAbsolute(explicitSourceRoot)
+      ? explicitSourceRoot
+      : path.resolve(root, explicitSourceRoot);
+  }
+  if (runtime === 'electron') {
+    return path.join(root, 'release');
+  }
+  return path.join(root, 'apps', appDir(targetPlatform), 'target', 'release', 'bundle');
+}
+
 function appDir(platformName) {
   if (platformName === 'macos') {
     return 'mac-tauri';
@@ -130,13 +210,14 @@ function appDir(platformName) {
   return `${platformName}-tauri`;
 }
 
-function collectArtifacts(root) {
+function collectArtifacts(root, options = {}) {
   if (!fs.existsSync(root)) {
     return [];
   }
-  const files = walk(root).filter((file) => {
+  const excludedRoots = (options.excludedRoots ?? []).map((entry) => path.resolve(entry));
+  const files = walk(root, excludedRoots).filter((file) => {
     const ext = path.extname(file).toLowerCase();
-    return ['.dmg', '.msi', '.exe', '.appimage', '.deb', '.rpm'].includes(ext);
+    return ['.dmg', '.msi', '.exe', '.pkg', '.zip', '.appimage', '.deb', '.rpm'].includes(ext);
   });
   return files.map((file) => ({
     path: file,
@@ -145,11 +226,15 @@ function collectArtifacts(root) {
   }));
 }
 
-function walk(dir) {
+function walk(dir, excludedRoots = []) {
+  const resolvedDir = path.resolve(dir);
+  if (excludedRoots.some((excludedRoot) => isSameOrChildPath(resolvedDir, excludedRoot))) {
+    return [];
+  }
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      return walk(fullPath);
+      return walk(fullPath, excludedRoots);
     }
     return [fullPath];
   });
@@ -157,13 +242,10 @@ function walk(dir) {
 
 function artifactKind(file) {
   const ext = path.extname(file).toLowerCase();
-  if (ext === '.dmg') {
+  if (ext === '.dmg' || ext === '.msi' || ext === '.exe' || ext === '.pkg') {
     return 'installer';
   }
-  if (ext === '.msi' || ext === '.exe') {
-    return 'installer';
-  }
-  if (ext === '.appimage' || ext === '.deb' || ext === '.rpm') {
+  if (ext === '.zip' || ext === '.appimage' || ext === '.deb' || ext === '.rpm') {
     return 'package';
   }
   return 'artifact';
@@ -183,24 +265,121 @@ function sanitize(value) {
   return String(value).replace(/[^a-zA-Z0-9._-]+/g, '');
 }
 
+function buildArtifactFileName({ projectName, version, framework, platform, arch, kind, ext }) {
+  return [
+    sanitize(projectName),
+    version,
+    framework,
+    platform,
+    arch,
+    kind,
+  ].join('-') + ext;
+}
+
+function buildArtifactTargetPath({ outputRoot, version, framework, platform, arch, fileName }) {
+  return path.join(outputRoot, sanitize(version), framework, platform, arch, fileName);
+}
+
+function isStructuredReleasePath(relativePath) {
+  const normalizedPath = relativePath.replace(/\\/g, '/');
+  const segments = normalizedPath.split('/');
+  return segments.length >= 6 && segments[0] === 'release' && segments[1] === 'final';
+}
+
+function compareEntries(left, right) {
+  return (
+    right.version.localeCompare(left.version, undefined, { numeric: true, sensitivity: 'base' }) ||
+    left.framework.localeCompare(right.framework) ||
+    left.platform.localeCompare(right.platform) ||
+    left.arch.localeCompare(right.arch) ||
+    left.fileName.localeCompare(right.fileName)
+  );
+}
+
+function summarizeVersions(entries) {
+  return [...groupBy(entries, (entry) => entry.version).entries()]
+    .map(([versionName, versionEntries]) => ({
+      version: versionName,
+      artifactCount: versionEntries.length,
+      frameworks: [...new Set(versionEntries.map((entry) => entry.framework))].sort(),
+      platforms: [...new Set(versionEntries.map((entry) => entry.platform))].sort(),
+      generatedAt: versionEntries
+        .map((entry) => entry.collectedAt)
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? null,
+    }))
+    .sort((left, right) =>
+      right.version.localeCompare(left.version, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+}
+
+function groupBy(entries, getKey) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const key = getKey(entry);
+    const bucket = groups.get(key) ?? [];
+    bucket.push(entry);
+    groups.set(key, bucket);
+  }
+  return groups;
+}
+
+function isSameOrChildPath(candidate, parent) {
+  const relativePath = path.relative(parent, candidate);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
 function sha256(file) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(file));
   return hash.digest('hex');
 }
 
-function renderMarkdown(manifest) {
+function renderRootMarkdown(manifest) {
   const lines = [
     '# Release Manifest',
     '',
     `Generated at: ${manifest.generatedAt}`,
     '',
-    '| Project | Version | Framework | Platform | Arch | Kind | File | Size | SHA-256 |',
-    '|---|---|---|---|---|---|---|---:|---|',
+    `Layout: \`${manifest.layout}\``,
+    '',
+    '## Versions',
+    '',
+    '| Version | Artifacts | Frameworks | Platforms | Latest Collection |',
+    '|---|---:|---|---|---|',
+  ];
+  for (const versionEntry of manifest.versions) {
+    lines.push(
+      `| ${versionEntry.version} | ${versionEntry.artifactCount} | ${versionEntry.frameworks.join(', ')} | ${versionEntry.platforms.join(', ')} | ${versionEntry.generatedAt ?? ''} |`,
+    );
+  }
+  lines.push('');
+  lines.push('## Artifacts');
+  lines.push('');
+  lines.push('| Project | Version | Framework | Platform | Arch | Kind | File | Relative Path | Size | SHA-256 |');
+  lines.push('|---|---|---|---|---|---|---|---|---:|---|');
+  for (const entry of manifest.artifacts) {
+    lines.push(
+      `| ${entry.projectName} | ${entry.version} | ${entry.framework} | ${entry.platform} | ${entry.arch} | ${entry.kind} | ${entry.fileName} | \`${entry.path}\` | ${entry.sizeBytes} | \`${entry.sha256}\` |`,
+    );
+  }
+  lines.push('');
+  return `${lines.join('\n')}\n`;
+}
+
+function renderVersionMarkdown(manifest) {
+  const lines = [
+    `# Release Manifest - ${manifest.version}`,
+    '',
+    `Generated at: ${manifest.generatedAt}`,
+    '',
+    '| Framework | Platform | Arch | Kind | File | Relative Path | Size | SHA-256 |',
+    '|---|---|---|---|---|---|---:|---|',
   ];
   for (const entry of manifest.artifacts) {
     lines.push(
-      `| ${entry.projectName} | ${entry.version} | ${entry.framework} | ${entry.platform} | ${entry.arch} | ${entry.kind} | ${entry.fileName} | ${entry.sizeBytes} | \`${entry.sha256}\` |`,
+      `| ${entry.framework} | ${entry.platform} | ${entry.arch} | ${entry.kind} | ${entry.fileName} | \`${entry.path}\` | ${entry.sizeBytes} | \`${entry.sha256}\` |`,
     );
   }
   lines.push('');
